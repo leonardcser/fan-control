@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-fan-control = "fan_optimizer:main"
+fan-control = "fan_control:main"
 
 [build-system]
 requires = ["uv_build>=0.9.26,<0.10.0"]
