@@ -32,9 +32,9 @@ devices:
 # Data collection test matrix
 data_collection:
   # Fan/pump speed levels to test (percentage: 0-100)
-  pwm2_levels: [30, 50, 70, 100]
+  pwm2_levels: [25, 50, 75, 100]
   pwm4_levels: [0, 25, 50, 75, 100]
-  pwm5_levels: [30, 50, 70, 100]
+  pwm5_levels: [15, 25, 50, 70, 100]
   pwm7_levels: [60, 80, 100]
 
   # Load levels to test
@@ -87,12 +87,12 @@ hardware:
 # Safety limits - abort data point and restore safe speeds if exceeded
 safety:
   # Skip thresholds - stop current test point and skip to next
-  skip_cpu_temp: 85.0
-  skip_gpu_temp: 83.0
+  skip_cpu_temp: 95.0
+  skip_gpu_temp: 80.0
 
   # Emergency shutdown limits (fatal)
-  emergency_cpu_temp: 95.0
-  emergency_gpu_temp: 88.0
+  emergency_cpu_temp: 100.0
+  emergency_gpu_temp: 85.0
 
   # Power-dependent minimum fan speeds
   power_dependent_minimums:
