@@ -122,41 +122,50 @@ class DataCollector:
         # Data storage
         self.measurements: List[MeasurementPoint] = []
 
-    def generate_test_points(self) -> List[TestPoint]:
+    def generate_test_points_for_load(
+        self, cpu_percent: int, gpu_percent: int, description: str
+    ):
         """
-        Generate test points using configured sampling strategy.
+        Generator that yields test points for a specific load level.
 
-        Returns:
-            List of test points to measure
+        Uses the configured sampling strategy to generate points on demand.
+        This allows replacing skipped/aborted points to maintain target sample count.
+
+        Args:
+            cpu_percent: CPU load percentage
+            gpu_percent: GPU load percentage
+            description: Load description
+
+        Yields:
+            TestPoint instances
         """
         strategy = self.data_config.get("sampling_strategy", "latin_hypercube")
-        num_samples_per_load = self.data_config.get("num_samples_per_load", 25)
-
         device_keys = list(self.devices.keys())
         num_devices = len(device_keys)
 
         # Collect levels for each device dynamically
         levels = [np.array(self.data_config[f"{k}_levels"]) for k in device_keys]
-        load_levels = self.data_config["load_levels"]
-
-        test_points = []
 
         if strategy == "latin_hypercube":
-            # Latin Hypercube Sampling - good coverage with fewer points
+            # For LHS, generate samples in batches since it's designed for fixed sample sizes
             from scipy.stats import qmc
 
-            sampler = qmc.LatinHypercube(d=num_devices, seed=self.sampling_seed)
-            samples = sampler.random(n=num_samples_per_load)
+            batch_size = self.data_config.get("num_samples_per_load", 25)
+            batch_num = 0
 
-            # Scale to PWM ranges
-            scaled_samples = qmc.scale(
-                samples,
-                l_bounds=[lvl.min() for lvl in levels],
-                u_bounds=[lvl.max() for lvl in levels],
-            )
+            while True:
+                # Generate a new batch with a different seed for each batch
+                seed = self.sampling_seed + batch_num
+                sampler = qmc.LatinHypercube(d=num_devices, seed=seed)
+                samples = sampler.random(n=batch_size)
 
-            # For each load level, create test points from samples
-            for load in load_levels:
+                # Scale to PWM ranges
+                scaled_samples = qmc.scale(
+                    samples,
+                    l_bounds=[lvl.min() for lvl in levels],
+                    u_bounds=[lvl.max() for lvl in levels],
+                )
+
                 for sample in scaled_samples:
                     pwm_map = {}
                     for key, val in zip(device_keys, sample):
@@ -165,42 +174,39 @@ class DataCollector:
                         if 0 < speed < min_pwm:
                             speed = 0
                         pwm_map[key] = speed
-                    test_points.append(
-                        TestPoint(
-                            pwm_values=pwm_map,
-                            cpu_percent=load["cpu_percent"],
-                            gpu_percent=load["gpu_percent"],
-                            description=load["description"],
-                        )
+
+                    yield TestPoint(
+                        pwm_values=pwm_map,
+                        cpu_percent=cpu_percent,
+                        gpu_percent=gpu_percent,
+                        description=description,
                     )
+
+                batch_num += 1
 
         elif strategy == "random":
-            # Random sampling
+            # Random sampling is naturally infinite
             rng = np.random.default_rng(seed=self.sampling_seed)
 
-            for load in load_levels:
-                for _ in range(num_samples_per_load):
-                    pwm_map = {}
-                    for key, lvl in zip(device_keys, levels):
-                        speed = int(rng.choice(lvl))
-                        min_pwm = self.devices[key].get("min_pwm", 0)
-                        if 0 < speed < min_pwm:
-                            speed = 0
-                        pwm_map[key] = speed
-                    test_points.append(
-                        TestPoint(
-                            pwm_values=pwm_map,
-                            cpu_percent=load["cpu_percent"],
-                            gpu_percent=load["gpu_percent"],
-                            description=load["description"],
-                        )
-                    )
+            while True:
+                pwm_map = {}
+                for key, lvl in zip(device_keys, levels):
+                    speed = int(rng.choice(lvl))
+                    min_pwm = self.devices[key].get("min_pwm", 0)
+                    if 0 < speed < min_pwm:
+                        speed = 0
+                    pwm_map[key] = speed
+
+                yield TestPoint(
+                    pwm_values=pwm_map,
+                    cpu_percent=cpu_percent,
+                    gpu_percent=gpu_percent,
+                    description=description,
+                )
 
         elif strategy == "grid":
-            # Grid sampling (recursive to handle dynamic number of fans)
-            import itertools
-
-            for load in load_levels:
+            # Grid sampling cycles through all combinations
+            while True:
                 for pwm_values in itertools.product(*levels):
                     pwm_map = {}
                     for key, val in zip(device_keys, pwm_values):
@@ -209,16 +215,13 @@ class DataCollector:
                         if 0 < speed < min_pwm:
                             speed = 0
                         pwm_map[key] = speed
-                    test_points.append(
-                        TestPoint(
-                            pwm_values=pwm_map,
-                            cpu_percent=load["cpu_percent"],
-                            gpu_percent=load["gpu_percent"],
-                            description=load["description"],
-                        )
-                    )
 
-        return test_points
+                    yield TestPoint(
+                        pwm_values=pwm_map,
+                        cpu_percent=cpu_percent,
+                        gpu_percent=gpu_percent,
+                        description=description,
+                    )
 
     def is_safe_test_point(
         self, point: TestPoint, current_power: Optional[tuple] = None
@@ -481,66 +484,94 @@ class DataCollector:
         Args:
             output_path: Path to output CSV file
         """
-        # Generate test points
-        print("\nGenerating test points...")
-        test_points = self.generate_test_points()
-        print(f"Generated {len(test_points)} test points")
+        load_levels = self.data_config["load_levels"]
+        num_samples_per_load = self.data_config.get("num_samples_per_load", 25)
 
-        # Filter safe test points (pre-check without power)
-        safe_points = []
-        for point in test_points:
-            check = self.is_safe_test_point(point)
-            if check.safe:
-                safe_points.append(point)
-            else:
-                print(f"Skipping unsafe point: {check.reason}")
-
-        print(f"\n{len(safe_points)} safe test points to collect")
-
-        # Collect measurements
         print("\n" + "=" * 80)
         print("STARTING DATA COLLECTION")
         print("=" * 80)
+        print(f"Target: {num_samples_per_load} measurements per load level")
+        print(f"Load levels: {len(load_levels)}")
+        print(f"Total target measurements: {num_samples_per_load * len(load_levels)}")
 
-        successful = 0
-        aborted = 0
+        total_successful = 0
+        total_skipped = 0
 
-        # Sort points by load to group them effectively
-        safe_points.sort(key=lambda p: (p.cpu_percent, p.gpu_percent))
-        total_points = len(safe_points)
-        processed_count = 0
+        # Process each load level
+        for load_idx, load in enumerate(load_levels, 1):
+            cpu_load = load["cpu_percent"]
+            gpu_load = load["gpu_percent"]
+            description = load["description"]
 
-        # Group by load level
-        for (cpu_load, gpu_load), group_iter in itertools.groupby(
-            safe_points, key=lambda p: (p.cpu_percent, p.gpu_percent)
-        ):
-            points_in_group = list(group_iter)
+            print(f"\n{'=' * 80}")
             print(
-                f"\nSetting Load Group: CPU {cpu_load}%, GPU {gpu_load}% ({len(points_in_group)} points)"
+                f"Load Level {load_idx}/{len(load_levels)}: {description} "
+                f"(CPU {cpu_load}%, GPU {gpu_load}%)"
             )
+            print(f"{'=' * 80}")
 
             # Set load for the entire group
             if not self.load_orchestrator.set_workload(cpu_load, gpu_load):
-                print("✗ Failed to set load for group")
-                aborted += len(points_in_group)
-                processed_count += len(points_in_group)
+                print("✗ Failed to set load for this level")
+                print(f"  Skipping all {num_samples_per_load} planned measurements")
+                total_skipped += num_samples_per_load
                 continue
 
-            # Process points in this group
-            for point in points_in_group:
-                processed_count += 1
-                print(f"\n[{processed_count}/{total_points}]")
+            # Create generator for this load level
+            point_generator = self.generate_test_points_for_load(
+                cpu_load, gpu_load, description
+            )
 
+            # Collect measurements until we reach target
+            successful_for_load = 0
+            attempted_for_load = 0
+            skipped_for_load = 0
+
+            for point in point_generator:
+                # Stop when we have enough successful measurements
+                if successful_for_load >= num_samples_per_load:
+                    break
+
+                attempted_for_load += 1
+
+                # Check if point is safe (pre-check without power)
+                safety_check = self.is_safe_test_point(point)
+                if not safety_check.safe:
+                    skipped_for_load += 1
+                    print(
+                        f"\n[Load {load_idx}: {successful_for_load}/{num_samples_per_load}] "
+                        f"Skipping unsafe point (attempt {attempted_for_load}): {safety_check.reason}"
+                    )
+                    continue
+
+                # Print progress
+                print(
+                    f"\n[Load {load_idx}: {successful_for_load + 1}/{num_samples_per_load}] "
+                    f"(Attempt {attempted_for_load})"
+                )
+
+                # Collect measurement
                 measurement = self.collect_measurement(point)
 
                 if measurement:
                     self.measurements.append(measurement)
-                    successful += 1
+                    successful_for_load += 1
+                    total_successful += 1
 
                     # Save incrementally
                     self.save_measurements(output_path)
                 else:
-                    aborted += 1
+                    skipped_for_load += 1
+
+            # Summary for this load level
+            print(f"\n{'=' * 80}")
+            print(f"Load Level {load_idx} Complete:")
+            print(f"  Successful: {successful_for_load}/{num_samples_per_load}")
+            print(f"  Skipped/Aborted: {skipped_for_load}")
+            print(f"  Total attempts: {attempted_for_load}")
+            print(f"{'=' * 80}")
+
+            total_skipped += skipped_for_load
 
         # Final save and plot
         self.save_measurements(output_path, generate_plots=True)
@@ -549,8 +580,9 @@ class DataCollector:
         print("\n" + "=" * 80)
         print("DATA COLLECTION COMPLETE")
         print("=" * 80)
-        print(f"Successful measurements: {successful}")
-        print(f"Aborted measurements: {aborted}")
+        print(f"Target measurements: {num_samples_per_load * len(load_levels)}")
+        print(f"Successful measurements: {total_successful}")
+        print(f"Skipped/Aborted: {total_skipped}")
         print(f"Total points collected: {len(self.measurements)}")
         print(f"Data saved to: {output_path}")
 
