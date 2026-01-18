@@ -64,7 +64,7 @@ data_collection:
   # Measurement parameters
   equilibration_check_interval: 1 # How often to sample temperature (seconds)
   equilibration_window: 10.0 # Window to check stability (seconds)
-  equilibration_threshold: 0.25 # Max temp change for equilibrium (°C)
+  equilibration_threshold: 0.1 # Max temp change for equilibrium (°C)
   equilibration_max_wait: 60 # Maximum wait time before timeout (seconds)
   equilibration_min_wait: 10 # Minimum wait before checking (seconds)
   load_stabilization_time: 10 # Time to wait after starting load (seconds)
