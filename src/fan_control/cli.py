@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 import yaml
+from dotenv import load_dotenv
 
 from .data_collector import DataCollector
 from .hardware import HardwareController
@@ -190,6 +191,7 @@ def load_config(config_path: str) -> Dict[str, Any]:
 
 def main() -> None:
     """Main entry point."""
+    load_dotenv()
     parser = argparse.ArgumentParser(
         description="Thermal Data Collector for Physics-Based Fan Optimization",
         formatter_class=argparse.RawDescriptionHelpFormatter,
