@@ -1,0 +1,118 @@
+# Physics-Based Fan Optimization - Data Collection Configuration
+#
+# This configuration is used to collect steady-state measurements for fitting
+# the thermal model parameters described in PHYSICS_MODEL.md
+
+# Control devices
+devices:
+  pwm2:
+    pwm_number: 2
+    name: "CPU Radiator Fan"
+    description: "Top radiator fan (pulls air through CPU radiator)"
+    min_pwm: 20 # Minimum safe speed (prevents stalling)
+
+  pwm4:
+    pwm_number: 4
+    name: "Bottom Intake Fans"
+    description: "3× bottom case fans (GPU intake, fresh air)"
+    min_pwm: 15
+
+  pwm5:
+    pwm_number: 5
+    name: "Front/Rear Case Fans"
+    description: "3× front intake + 1× rear exhaust"
+    min_pwm: 15
+
+  pwm7:
+    pwm_number: 7
+    name: "CPU Pump"
+    description: "AIO pump (coolant circulation)"
+    min_pwm: 60
+
+# Data collection test matrix
+data_collection:
+  # Fan/pump speed levels to test (percentage: 0-100)
+  pwm2_levels: [30, 50, 70, 100]
+  pwm4_levels: [0, 25, 50, 75, 100]
+  pwm5_levels: [30, 50, 70, 100]
+  pwm7_levels: [60, 80, 100]
+
+  # Load levels to test
+  load_levels:
+    - cpu_percent: 0
+      gpu_percent: 0
+      description: "Idle"
+    - cpu_percent: 50
+      gpu_percent: 0
+      description: "Moderate CPU"
+    - cpu_percent: 100
+      gpu_percent: 0
+      description: "Full CPU"
+    - cpu_percent: 0
+      gpu_percent: 50
+      description: "Moderate GPU"
+    - cpu_percent: 0
+      gpu_percent: 100
+      description: "Full GPU"
+    - cpu_percent: 50
+      gpu_percent: 100
+      description: "Mixed load"
+    - cpu_percent: 100
+      gpu_percent: 100
+      description: "Full system load"
+
+  # Measurement parameters
+  stabilization_time: 45 # Wait for thermal equilibrium (seconds)
+  load_stabilization_time: 10 # Time to wait after starting load (seconds)
+  measurement_duration: 5 # How long to measure after stabilization (seconds)
+  sample_interval: 1 # Sampling interval during measurement (seconds)
+
+  # Smart test point selection
+  sampling_strategy: "latin_hypercube"
+  num_samples: 50 # Target number of data points
+  sampling_seed: 42
+
+# Hardware parameters
+hardware:
+  hwmon_device_name: "nct6799"
+  cpu_sensor_name: "k10temp-pci-00c3"
+  cpu_sensor_label: "Tctl:"
+
+  # Timeouts and delays
+  command_timeout: 5
+  ambient_timeout: 300
+  retry_delay: 0.1
+  max_retries: 3
+
+# Safety limits - abort data point and restore safe speeds if exceeded
+safety:
+  # Skip thresholds - stop current test point and skip to next
+  skip_cpu_temp: 85.0
+  skip_gpu_temp: 83.0
+
+  # Emergency shutdown limits (fatal)
+  emergency_cpu_temp: 95.0
+  emergency_gpu_temp: 88.0
+
+  # Power-dependent minimum fan speeds
+  power_dependent_minimums:
+    - component: "cpu"
+      power_threshold: 100 # If CPU power > 100W
+      pwm2_min: 50
+      pwm7_min: 80
+
+  # Never test all fans at minimum simultaneously
+  min_total_cooling_effort: 25 # Sum of all PWM percentages must be >= 25%
+
+# Ambient temperature (optional but recommended for accurate model)
+ambient:
+  source: "home-assistant"
+  ha_url: "http://ha.pi.lan"
+  ha_entity_id: "sensor.ewelink_snzb_02p_temperature_2"
+  ha_token_env: "HA_TOKEN"
+
+# Output
+output:
+  directory: "./data"
+  filename_prefix: "thermal_data"
+  format: "csv" # CSV format for easy analysis

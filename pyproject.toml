@@ -1,0 +1,23 @@
+[project]
+name = "fan-control"
+version = "0.1.0"
+description = "Fan curve optimizer for finding minimum fan speeds at different loads"
+readme = "README.md"
+authors = [
+    { name = "leonardcser", email = "73912641+leonardcser@users.noreply.github.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "numpy>=2.4.1",
+    "pandas>=2.3.3",
+    "pyyaml>=6.0.3",
+    "scipy>=1.17.0",
+    "requests>=2.32.0",
+]
+
+[project.scripts]
+fan-control = "fan_optimizer:main"
+
+[build-system]
+requires = ["uv_build>=0.9.26,<0.10.0"]
+build-backend = "uv_build"
