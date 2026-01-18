@@ -1,6 +1,7 @@
 """Data collection for thermal model fitting."""
 
 import csv
+import itertools
 import time
 from collections import deque
 from pathlib import Path
@@ -134,7 +135,7 @@ class DataCollector:
             List of test points to measure
         """
         strategy = self.data_config.get("sampling_strategy", "latin_hypercube")
-        num_samples = self.data_config.get("num_samples", 50)
+        num_samples_per_load = self.data_config.get("num_samples_per_load", 25)
 
         device_keys = list(self.devices.keys())
         num_devices = len(device_keys)
@@ -150,7 +151,7 @@ class DataCollector:
             from scipy.stats import qmc
 
             sampler = qmc.LatinHypercube(d=num_devices, seed=self.sampling_seed)
-            samples = sampler.random(n=num_samples)
+            samples = sampler.random(n=num_samples_per_load)
 
             # Scale to PWM ranges
             scaled_samples = qmc.scale(
@@ -179,7 +180,7 @@ class DataCollector:
             rng = np.random.default_rng(seed=self.sampling_seed)
 
             for load in load_levels:
-                for _ in range(num_samples // len(load_levels)):
+                for _ in range(num_samples_per_load):
                     pwm_map = {
                         key: int(rng.choice(lvl))
                         for key, lvl in zip(device_keys, levels)
@@ -283,14 +284,6 @@ class DataCollector:
         print(f"  Load: CPU {point.cpu_percent}%, GPU {point.gpu_percent}%")
         print(f"  PWM: {pwm_str}")
         print(f"{'=' * 80}")
-
-        # Set load
-        print("Setting load...")
-        if not self.load_orchestrator.set_workload(
-            point.cpu_percent, point.gpu_percent
-        ):
-            print("✗ Failed to set load")
-            return None
 
         # Measure power
         cpu_power = self.hardware.get_cpu_power()
@@ -544,22 +537,45 @@ class DataCollector:
         successful = 0
         aborted = 0
 
-        for i, point in enumerate(safe_points):
-            print(f"\n[{i + 1}/{len(safe_points)}]")
+        # Sort points by load to group them effectively
+        safe_points.sort(key=lambda p: (p.cpu_percent, p.gpu_percent))
+        total_points = len(safe_points)
+        processed_count = 0
 
-            measurement = self.collect_measurement(point)
+        # Group by load level
+        for (cpu_load, gpu_load), group_iter in itertools.groupby(
+            safe_points, key=lambda p: (p.cpu_percent, p.gpu_percent)
+        ):
+            points_in_group = list(group_iter)
+            print(
+                f"\nSetting Load Group: CPU {cpu_load}%, GPU {gpu_load}% ({len(points_in_group)} points)"
+            )
 
-            if measurement:
-                self.measurements.append(measurement)
-                successful += 1
+            # Set load for the entire group
+            if not self.load_orchestrator.set_workload(cpu_load, gpu_load):
+                print("✗ Failed to set load for group")
+                aborted += len(points_in_group)
+                processed_count += len(points_in_group)
+                continue
 
-                # Save incrementally
-                self.save_measurements(output_path)
-            else:
-                aborted += 1
+            # Process points in this group
+            for point in points_in_group:
+                processed_count += 1
+                print(f"\n[{processed_count}/{total_points}]")
+
+                measurement = self.collect_measurement(point)
+
+                if measurement:
+                    self.measurements.append(measurement)
+                    successful += 1
+
+                    # Save incrementally
+                    self.save_measurements(output_path)
+                else:
+                    aborted += 1
 
         # Final save and plot
-        self.save_measurements(output_path)
+        self.save_measurements(output_path, generate_plots=True)
 
         # Final summary
         print("\n" + "=" * 80)
@@ -576,12 +592,15 @@ class DataCollector:
 
         print("=" * 80 + "\n")
 
-    def save_measurements(self, output_path: Path) -> None:
+    def save_measurements(
+        self, output_path: Path, generate_plots: bool = False
+    ) -> None:
         """
         Save measurements to CSV file and generate plots.
 
         Args:
             output_path: Path to output CSV file
+            generate_plots: Whether to generate plots (default: False)
         """
         output_path.parent.mkdir(parents=True, exist_ok=True)
         device_keys = list(self.devices.keys())
@@ -597,7 +616,7 @@ class DataCollector:
                 writer.writerow(measurement.to_dict())
 
         # Generate plots
-        if len(self.measurements) >= 2:
+        if generate_plots and len(self.measurements) >= 2:
             plots_dir = output_path.parent / "plots"
             try:
                 generate_all_plots(output_path, plots_dir, quiet=True)
