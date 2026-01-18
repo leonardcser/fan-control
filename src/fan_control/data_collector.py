@@ -14,6 +14,7 @@ from .hardware import HardwareController
 from .load import LoadOrchestrator
 from .plotting import generate_all_plots
 from .safety import SafetyMonitor, SkipPointError
+from .utils import drop_privileges
 
 
 class TemperatureWindow:
@@ -602,24 +603,27 @@ class DataCollector:
             output_path: Path to output CSV file
             generate_plots: Whether to generate plots (default: False)
         """
-        output_path.parent.mkdir(parents=True, exist_ok=True)
         device_keys = list(self.devices.keys())
 
-        # Save CSV
-        with open(output_path, "w", newline="") as f:
-            writer = csv.DictWriter(
-                f, fieldnames=MeasurementPoint.csv_header(device_keys)
-            )
-            writer.writeheader()
+        # Save CSV (drop privileges to ensure proper ownership)
+        with drop_privileges():
+            output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            for measurement in self.measurements:
-                writer.writerow(measurement.to_dict())
+            with open(output_path, "w", newline="") as f:
+                writer = csv.DictWriter(
+                    f, fieldnames=MeasurementPoint.csv_header(device_keys)
+                )
+                writer.writeheader()
+
+                for measurement in self.measurements:
+                    writer.writerow(measurement.to_dict())
 
         # Generate plots
         if generate_plots and len(self.measurements) >= 2:
             plots_dir = output_path.parent / "plots"
             try:
-                generate_all_plots(output_path, plots_dir, quiet=True)
+                with drop_privileges():
+                    generate_all_plots(output_path, plots_dir, quiet=True)
             except Exception as e:
                 # Don't fail data collection if plotting fails
                 print(f"  ⚠ Plot generation failed: {e}")

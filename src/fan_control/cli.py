@@ -14,6 +14,7 @@ from .data_collector import DataCollector
 from .hardware import HardwareController
 from .load import LoadOrchestrator
 from .safety import SafetyMonitor, SafetyError
+from .utils import drop_privileges
 
 
 def check_prerequisites() -> bool:
@@ -134,14 +135,17 @@ def collect_mode(cfg: Dict[str, Any]) -> None:
             cfg,
         )
 
-        # Create output path
+        # Create output path (drop privileges for file creation)
         output_dir = Path(cfg["output"]["directory"])
-        output_dir.mkdir(parents=True, exist_ok=True)
+        with drop_privileges():
+            output_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_name = f"{cfg['output']['filename_prefix']}_{timestamp}"
         run_dir = output_dir / run_name
-        run_dir.mkdir(parents=True, exist_ok=True)
+
+        with drop_privileges():
+            run_dir.mkdir(parents=True, exist_ok=True)
 
         filename = f"{run_name}.csv"
         output_path = run_dir / filename
