@@ -3,6 +3,7 @@
 import os
 import subprocess
 import time
+import signal
 from typing import Optional
 
 
@@ -13,19 +14,65 @@ class LoadController:
         self.process: Optional[subprocess.Popen] = None
 
     def stop(self) -> None:
-        """Stop the load process."""
+        """Stop the load process and its children."""
         if self.process:
-            self.process.terminate()
             try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait()
-            self.process = None
+                # Send SIGTERM to the entire process group
+                pgid = os.getpgid(self.process.pid)
+                os.killpg(pgid, signal.SIGTERM)
+
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    # Fallback to SIGKILL if it doesn't stop
+                    os.killpg(pgid, signal.SIGKILL)
+                    self.process.wait()
+            except ProcessLookupError:
+                # Process already gone
+                pass
+            finally:
+                self.process = None
 
 
 class GPULoadController(LoadController):
     """Control GPU load using gpu-burn."""
+
+    def stop(self) -> None:
+        """
+        Stop the GPU load process safely.
+
+        We attempt to kill the child processes (workers) first while keeping
+        the parent alive. This is because:
+        1. gpu-burn parent exits immediately on SIGTERM without waiting for children
+        2. If parent dies, the pipe to children closes
+        3. Children writing to closed pipe get SIGPIPE and die immediately
+        4. Immediate death skips cleanup (cuMemFree), leaving GPU in bad state
+
+        By killing children first, they can cleanup and exit gracefully, causing
+        the parent to exit naturally when it detects no active clients.
+        """
+        if self.process:
+            try:
+                # Attempt to kill children first using pkill
+                # -P <ppid> matches processes whose parent is ppid
+                subprocess.run(
+                    ["pkill", "-TERM", "-P", str(self.process.pid)],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                )
+
+                # Give children time to cleanup and parent time to notice and exit
+                try:
+                    self.process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    # If graceful shutdown failed, will fall through to base stop()
+                    pass
+            except (FileNotFoundError, Exception):
+                # If pkill missing or other error, fall through to base stop()
+                pass
+
+        super().stop()
 
     def set_load(self, percentage: int, duration: int = 3600) -> bool:
         """
@@ -47,10 +94,12 @@ class GPULoadController(LoadController):
             # gpu-burn runs at 100% by default
             # For percentage control, we use -m flag to limit memory usage
             # This indirectly controls GPU utilization
+            # Start in a new session to allow group termination
             self.process = subprocess.Popen(
                 ["gpu-burn", "-m", f"{percentage}%", str(duration)],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                start_new_session=True,
             )
             return True
 
@@ -90,6 +139,7 @@ class CPULoadController(LoadController):
             # We control load by spawning a proportional number of workers
             cores_to_use = max(1, int(self.total_cores * percentage / 100))
 
+            # Start in a new session to allow group termination
             self.process = subprocess.Popen(
                 [
                     "stress",
@@ -100,6 +150,7 @@ class CPULoadController(LoadController):
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                start_new_session=True,
             )
             return True
 
