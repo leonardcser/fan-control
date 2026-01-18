@@ -2,15 +2,84 @@
 
 import csv
 import time
+from collections import deque
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
 from .data import MeasurementPoint, SafetyCheck, TestPoint
 from .hardware import HardwareController
 from .load import LoadOrchestrator
+from .plotting import generate_all_plots
 from .safety import SafetyMonitor, SkipPointError
+
+
+class TemperatureWindow:
+    """Maintains a sliding window of temperature readings for equilibration detection."""
+
+    def __init__(self, window_duration: float, check_interval: float):
+        self.window_duration = window_duration
+        self.check_interval = check_interval
+        self.max_samples = int(window_duration / check_interval) + 1
+
+        # Separate queues for CPU and GPU
+        self.cpu_temps = deque(maxlen=self.max_samples)
+        self.gpu_temps = deque(maxlen=self.max_samples)
+        self.timestamps = deque(maxlen=self.max_samples)
+
+    def add_reading(
+        self, cpu_temp: Optional[float], gpu_temp: Optional[float], timestamp: float
+    ) -> None:
+        """Add a temperature reading to the window."""
+        self.cpu_temps.append(cpu_temp)
+        self.gpu_temps.append(gpu_temp)
+        self.timestamps.append(timestamp)
+
+    def is_full(self) -> bool:
+        """Check if window has enough data for stability check."""
+        return len(self.timestamps) >= self.max_samples
+
+    def check_equilibration(self, threshold: float) -> Tuple[bool, dict]:
+        """
+        Check if temperatures have equilibrated.
+
+        Returns:
+            (is_equilibrated, details_dict)
+        """
+        if not self.is_full():
+            return False, {
+                "cpu_range": None,
+                "gpu_range": None,
+                "num_samples": len(self.timestamps),
+            }
+
+        # Filter out None values
+        cpu_valid = [t for t in self.cpu_temps if t is not None]
+        gpu_valid = [t for t in self.gpu_temps if t is not None]
+
+        # Calculate ranges (max - min)
+        cpu_range = max(cpu_valid) - min(cpu_valid) if cpu_valid else None
+        gpu_range = max(gpu_valid) - min(gpu_valid) if gpu_valid else None
+
+        # Check stability
+        cpu_stable = cpu_range is not None and cpu_range < threshold
+        gpu_stable = gpu_range is not None and gpu_range < threshold
+
+        # Equilibrated if both stable (or one missing but other stable)
+        is_equilibrated = (
+            (cpu_stable and gpu_stable)
+            or (cpu_range is None and gpu_stable)
+            or (gpu_range is None and cpu_stable)
+        )
+
+        return is_equilibrated, {
+            "cpu_range": cpu_range,
+            "gpu_range": gpu_range,
+            "cpu_stable": cpu_stable,
+            "gpu_stable": gpu_stable,
+            "num_samples": len(self.timestamps),
+        }
 
 
 class DataCollector:
@@ -33,10 +102,26 @@ class DataCollector:
         self.safety_config = config["safety"]
         self.hw_config = config["hardware"]
         self.devices = config["devices"]
+        self.output_config = config.get("output", {})
         self.load_stabilization_time = self.data_config.get(
             "load_stabilization_time", 10
         )
         self.sampling_seed = self.data_config.get("sampling_seed", 42)
+
+        # Check if using new equilibration config
+        if "equilibration_window" in self.data_config:
+            self.use_dynamic_equilibration = True
+            self.eq_check_interval = self.data_config.get(
+                "equilibration_check_interval", 1.0
+            )
+            self.eq_window = self.data_config.get("equilibration_window", 10.0)
+            self.eq_threshold = self.data_config.get("equilibration_threshold", 0.5)
+            self.eq_max_wait = self.data_config.get("equilibration_max_wait", 120)
+            self.eq_min_wait = self.data_config.get("equilibration_min_wait", 10)
+        else:
+            # Fall back to old fixed stabilization
+            self.use_dynamic_equilibration = False
+            self.stabilization_time = self.data_config.get("stabilization_time", 45)
 
         # Data storage
         self.measurements: List[MeasurementPoint] = []
@@ -189,7 +274,6 @@ class DataCollector:
         Returns:
             MeasurementPoint if successful, None if aborted
         """
-        stabilization_time = self.data_config["stabilization_time"]
         measurement_duration = self.data_config["measurement_duration"]
         sample_interval = self.data_config["sample_interval"]
 
@@ -238,36 +322,22 @@ class DataCollector:
                 print(f"✗ Failed to set {device_id} (PWM{pwm_num})")
                 return None
 
-        # Wait for stabilization
-        print(f"Waiting {stabilization_time}s for thermal equilibrium...")
-        start_stabilization = time.time()
-
-        for i in range(stabilization_time):
-            time.sleep(1)
-
-            # Check safety monitor
+        # Wait for stabilization/equilibration
+        if self.use_dynamic_equilibration:
             try:
-                self.safety.check_safety()
-            except SkipPointError as e:
-                print(f"\n✗ SKIP: {e}")
-                print("  Restoring auto fan control and skipping this test point")
-                self.safety._apply_emergency_speeds()
+                actual_stabilization_time, eq_info = self.wait_for_equilibration()
+            except SkipPointError:
                 return None
-            except Exception as e:
-                print(f"\n✗ ABORT: Unexpected error during safety check: {e}")
-                raise
-
-            # Get current temperatures for display
-            cpu_temp = self.hardware.get_cpu_temp()
-            gpu_temp = self.hardware.get_gpu_temp()
-
-            # Print progress
-            if (i + 1) % 10 == 0 or i == 0:
-                cpu_str = f"{cpu_temp:.1f}°C" if cpu_temp else "N/A"
-                gpu_str = f"{gpu_temp:.1f}°C" if gpu_temp else "N/A"
-                print(f"  {i + 1:3d}s: CPU {cpu_str}, GPU {gpu_str}")
-
-        actual_stabilization_time = time.time() - start_stabilization
+        else:
+            try:
+                actual_stabilization_time = self._wait_fixed_stabilization()
+                eq_info = {
+                    "method": "fixed",
+                    "equilibrated": True,
+                    "reason": f"fixed_{self.stabilization_time}s",
+                }
+            except SkipPointError:
+                return None
 
         # Measure over duration
         print(f"Measuring for {measurement_duration}s...")
@@ -326,11 +396,125 @@ class DataCollector:
             cpu_load_target=point.cpu_percent,
             gpu_load_target=point.gpu_percent,
             stabilization_time=actual_stabilization_time,
+            equilibration_method=eq_info["method"],
+            equilibrated=eq_info["equilibrated"],
+            equilibration_reason=eq_info.get("reason"),
             description=point.description,
         )
 
         print("✓ Measurement complete")
         return measurement
+
+    def wait_for_equilibration(self) -> Tuple[float, dict]:
+        """
+        Wait for temperature equilibration using dynamic detection.
+
+        Returns:
+            (actual_wait_time, equilibration_info)
+        """
+        start_time = time.time()
+
+        # Initialize temperature window
+        window = TemperatureWindow(
+            window_duration=self.eq_window, check_interval=self.eq_check_interval
+        )
+
+        eq_info = {
+            "method": "dynamic",
+            "equilibrated": False,
+            "reason": None,
+            "final_cpu_range": None,
+            "final_gpu_range": None,
+        }
+
+        print(f"Waiting for thermal equilibrium (max {self.eq_max_wait}s)...")
+        print(f"  Criteria: ΔT < {self.eq_threshold}°C over {self.eq_window}s window")
+
+        iteration = 0
+
+        while True:
+            elapsed = time.time() - start_time
+            time.sleep(self.eq_check_interval)
+            iteration += 1
+
+            # Safety check
+            try:
+                self.safety.check_safety()
+            except SkipPointError as e:
+                print(f"\n✗ SKIP: {e}")
+                print("  Restoring auto fan control and skipping this test point")
+                self.safety._apply_emergency_speeds()
+                raise
+
+            # Read temperatures
+            cpu_temp = self.hardware.get_cpu_temp()
+            gpu_temp = self.hardware.get_gpu_temp()
+            window.add_reading(cpu_temp, gpu_temp, time.time())
+
+            # Log progress every 10 seconds
+            if iteration % 10 == 0 or iteration == 1:
+                cpu_str = f"{cpu_temp:.1f}°C" if cpu_temp else "N/A"
+                gpu_str = f"{gpu_temp:.1f}°C" if gpu_temp else "N/A"
+                print(f"  {int(elapsed):3d}s: CPU {cpu_str}, GPU {gpu_str}")
+
+            # Check timeout
+            if elapsed >= self.eq_max_wait:
+                eq_info["equilibrated"] = False
+                eq_info["reason"] = f"timeout_after_{self.eq_max_wait}s"
+                _, details = window.check_equilibration(self.eq_threshold)
+                eq_info["final_cpu_range"] = details["cpu_range"]
+                eq_info["final_gpu_range"] = details["gpu_range"]
+                print(f"\n  ⚠ Timeout reached ({self.eq_max_wait}s)")
+                if details["cpu_range"] is not None:
+                    print(f"  Final CPU range: {details['cpu_range']:.2f}°C")
+                if details["gpu_range"] is not None:
+                    print(f"  Final GPU range: {details['gpu_range']:.2f}°C")
+                break
+
+            # Check equilibration (only after minimum wait)
+            if elapsed >= self.eq_min_wait:
+                is_equilibrated, details = window.check_equilibration(self.eq_threshold)
+
+                if is_equilibrated:
+                    eq_info["equilibrated"] = True
+                    eq_info["reason"] = "equilibrated"
+                    eq_info["final_cpu_range"] = details["cpu_range"]
+                    eq_info["final_gpu_range"] = details["gpu_range"]
+                    print(f"\n  ✓ Equilibrium reached after {elapsed:.1f}s")
+                    if details["cpu_range"] is not None:
+                        print(f"  CPU range: {details['cpu_range']:.2f}°C")
+                    if details["gpu_range"] is not None:
+                        print(f"  GPU range: {details['gpu_range']:.2f}°C")
+                    break
+
+        return time.time() - start_time, eq_info
+
+    def _wait_fixed_stabilization(self) -> float:
+        """Legacy fixed-time stabilization wait (backward compatibility)."""
+        stabilization_time = self.stabilization_time
+        print(f"Waiting {stabilization_time}s for thermal equilibrium (fixed)...")
+        start = time.time()
+
+        for i in range(stabilization_time):
+            time.sleep(1)
+
+            try:
+                self.safety.check_safety()
+            except SkipPointError as e:
+                print(f"\n✗ SKIP: {e}")
+                print("  Restoring auto fan control and skipping this test point")
+                self.safety._apply_emergency_speeds()
+                raise
+
+            cpu_temp = self.hardware.get_cpu_temp()
+            gpu_temp = self.hardware.get_gpu_temp()
+
+            if (i + 1) % 10 == 0 or i == 0:
+                cpu_str = f"{cpu_temp:.1f}°C" if cpu_temp else "N/A"
+                gpu_str = f"{gpu_temp:.1f}°C" if gpu_temp else "N/A"
+                print(f"  {i + 1:3d}s: CPU {cpu_str}, GPU {gpu_str}")
+
+        return time.time() - start
 
     def run_collection(self, output_path: Path) -> None:
         """
@@ -377,6 +561,9 @@ class DataCollector:
             else:
                 aborted += 1
 
+        # Final save and plot
+        self.save_measurements(output_path)
+
         # Final summary
         print("\n" + "=" * 80)
         print("DATA COLLECTION COMPLETE")
@@ -385,11 +572,16 @@ class DataCollector:
         print(f"Aborted measurements: {aborted}")
         print(f"Total points collected: {len(self.measurements)}")
         print(f"Data saved to: {output_path}")
+
+        if len(self.measurements) >= 2:
+            plots_dir = output_path.parent / "plots"
+            print(f"Plots saved to: {plots_dir}")
+
         print("=" * 80 + "\n")
 
     def save_measurements(self, output_path: Path) -> None:
         """
-        Save measurements to CSV file.
+        Save measurements to CSV file and generate plots.
 
         Args:
             output_path: Path to output CSV file
@@ -397,6 +589,7 @@ class DataCollector:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         device_keys = list(self.devices.keys())
 
+        # Save CSV
         with open(output_path, "w", newline="") as f:
             writer = csv.DictWriter(
                 f, fieldnames=MeasurementPoint.csv_header(device_keys)
@@ -405,3 +598,12 @@ class DataCollector:
 
             for measurement in self.measurements:
                 writer.writerow(measurement.to_dict())
+
+        # Generate plots
+        if len(self.measurements) >= 2:
+            plots_dir = output_path.parent / "plots"
+            try:
+                generate_all_plots(output_path, plots_dir, quiet=True)
+            except Exception as e:
+                # Don't fail data collection if plotting fails
+                print(f"  ⚠ Plot generation failed: {e}")

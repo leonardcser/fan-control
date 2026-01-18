@@ -291,8 +291,16 @@ Vary fan speeds, pump speed, and loads to capture the full range of operating co
 ## Model Workflow
 
 1. **Data Collection**: Measure temperatures across range of fan speeds, pump speeds, and workloads
+   - Plots are automatically generated after each data point (configurable in `config.yaml`)
+   - Visualizations saved to `./data/plots/` directory
+   - 9 plot types: correlation matrix, temp vs fans, temp vs power, pump-radiator interaction, thermal resistance, pairwise interactions, cooling effectiveness, ambient normalization, 3D surfaces
+
 2. **Parameter Fitting**: Fit the 11 thermal parameters using least-squares regression (scipy.optimize.curve_fit or similar)
+
 3. **Validation**: Verify model predictions match actual measurements (compute RMSE, plot predicted vs actual)
+
 4. **Optimization Setup**: Implement constrained optimizer to find minimal fan and pump speeds for given temperature targets
+
 5. **Runtime Control**: Query optimizer with current conditions (P_cpu, P_gpu, T_amb) and temperature targets to get optimal fan and pump speeds
+
 6. **Monitoring**: Track model accuracy over time, recalibrate if needed (e.g., dust buildup changes thermal resistance)

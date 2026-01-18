@@ -62,7 +62,11 @@ data_collection:
       description: "Full system load"
 
   # Measurement parameters
-  stabilization_time: 45 # Wait for thermal equilibrium (seconds)
+  equilibration_check_interval: 1 # How often to sample temperature (seconds)
+  equilibration_window: 10.0 # Window to check stability (seconds)
+  equilibration_threshold: 0.25 # Max temp change for equilibrium (°C)
+  equilibration_max_wait: 60 # Maximum wait time before timeout (seconds)
+  equilibration_min_wait: 10 # Minimum wait before checking (seconds)
   load_stabilization_time: 10 # Time to wait after starting load (seconds)
   measurement_duration: 5 # How long to measure after stabilization (seconds)
   sample_interval: 1 # Sampling interval during measurement (seconds)
