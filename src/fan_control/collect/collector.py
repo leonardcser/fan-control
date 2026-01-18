@@ -110,20 +110,14 @@ class DataCollector:
         )
         self.sampling_seed = self.data_config.get("sampling_seed", 42)
 
-        # Check if using new equilibration config
-        if "equilibration_window" in self.data_config:
-            self.use_dynamic_equilibration = True
-            self.eq_check_interval = self.data_config.get(
-                "equilibration_check_interval", 1.0
-            )
-            self.eq_window = self.data_config.get("equilibration_window", 10.0)
-            self.eq_threshold = self.data_config.get("equilibration_threshold", 0.5)
-            self.eq_max_wait = self.data_config.get("equilibration_max_wait", 120)
-            self.eq_min_wait = self.data_config.get("equilibration_min_wait", 10)
-        else:
-            # Fall back to old fixed stabilization
-            self.use_dynamic_equilibration = False
-            self.stabilization_time = self.data_config.get("stabilization_time", 45)
+        # Dynamic equilibration config
+        self.eq_check_interval = self.data_config.get(
+            "equilibration_check_interval", 1.0
+        )
+        self.eq_window = self.data_config["equilibration_window"]
+        self.eq_threshold = self.data_config.get("equilibration_threshold", 0.5)
+        self.eq_max_wait = self.data_config.get("equilibration_max_wait", 120)
+        self.eq_min_wait = self.data_config.get("equilibration_min_wait", 10)
 
         # Data storage
         self.measurements: List[MeasurementPoint] = []
@@ -313,22 +307,11 @@ class DataCollector:
                 print(f"✗ Failed to set {device_id} (PWM{pwm_num})")
                 return None
 
-        # Wait for stabilization/equilibration
-        if self.use_dynamic_equilibration:
-            try:
-                actual_stabilization_time, eq_info = self.wait_for_equilibration()
-            except SkipPointError:
-                return None
-        else:
-            try:
-                actual_stabilization_time = self._wait_fixed_stabilization()
-                eq_info = {
-                    "method": "fixed",
-                    "equilibrated": True,
-                    "reason": f"fixed_{self.stabilization_time}s",
-                }
-            except SkipPointError:
-                return None
+        # Wait for equilibration
+        try:
+            actual_stabilization_time, eq_info = self.wait_for_equilibration()
+        except SkipPointError:
+            return None
 
         # Measure over duration
         print(f"Measuring for {measurement_duration}s...")
@@ -479,33 +462,6 @@ class DataCollector:
                     break
 
         return time.time() - start_time, eq_info
-
-    def _wait_fixed_stabilization(self) -> float:
-        """Legacy fixed-time stabilization wait (backward compatibility)."""
-        stabilization_time = self.stabilization_time
-        print(f"Waiting {stabilization_time}s for thermal equilibrium (fixed)...")
-        start = time.time()
-
-        for i in range(stabilization_time):
-            time.sleep(1)
-
-            try:
-                self.safety.check_safety()
-            except SkipPointError as e:
-                print(f"\n✗ SKIP: {e}")
-                print("  Restoring auto fan control and skipping this test point")
-                self.safety._apply_emergency_speeds()
-                raise
-
-            cpu_temp = self.hardware.get_cpu_temp()
-            gpu_temp = self.hardware.get_gpu_temp()
-
-            if (i + 1) % 10 == 0 or i == 0:
-                cpu_str = f"{cpu_temp:.1f}°C" if cpu_temp else "N/A"
-                gpu_str = f"{gpu_temp:.1f}°C" if gpu_temp else "N/A"
-                print(f"  {i + 1:3d}s: CPU {cpu_str}, GPU {gpu_str}")
-
-        return time.time() - start
 
     def run_collection(self, output_path: Path) -> None:
         """
