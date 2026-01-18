@@ -10,7 +10,7 @@ from typing import Any, Dict
 import yaml
 from dotenv import load_dotenv
 
-from .data_collector import DataCollector
+from .collect.collector import DataCollector
 from .hardware import HardwareController
 from .load import LoadOrchestrator
 from .safety import SafetyMonitor, SafetyError
