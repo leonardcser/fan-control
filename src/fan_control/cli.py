@@ -141,7 +141,7 @@ def collect_mode(cfg: Dict[str, Any]) -> None:
             output_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_name = f"{cfg['output']['filename_prefix']}_{timestamp}"
+        run_name = f"fan_control_{timestamp}"
         run_dir = output_dir / run_name
 
         with drop_privileges():

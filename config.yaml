@@ -72,7 +72,7 @@ data_collection:
   sample_interval: 1 # Sampling interval during measurement (seconds)
 
   # Smart test point selection
-  sampling_strategy: "latin_hypercube"
+  sampling_strategy: "latin_hypercube" # Options: latin_hypercube (recommended), random, grid
   num_samples_per_load: 5 # Target number of data points per load level
   sampling_seed: 42
 
@@ -90,9 +90,9 @@ hardware:
 
 # Safety limits - abort data point and restore safe speeds if exceeded
 safety:
-  # Skip thresholds - stop current test point and skip to next
-  skip_cpu_temp: 95.0
-  skip_gpu_temp: 80.0
+  # Abort thresholds - stop current test point and abort to next
+  abort_cpu_temp: 95.0
+  abort_gpu_temp: 80.0
 
   # Emergency shutdown limits (fatal)
   emergency_cpu_temp: 100.0
@@ -100,8 +100,8 @@ safety:
 
   # Power-dependent minimum fan speeds
   power_dependent_minimums:
-    - component: "cpu"
-      power_threshold: 100 # If CPU power > 100W
+    - component: "cpu" # Options: cpu, gpu
+      power_threshold: 100 # If power > threshold
       pwm2_min: 50
       pwm7_min: 80
 
@@ -110,7 +110,7 @@ safety:
 
 # Ambient temperature (optional but recommended for accurate model)
 ambient:
-  source: "home-assistant"
+  source: "home-assistant" # Options: home-assistant, null (to disable)
   ha_url: "http://ha.pi.lan"
   ha_entity_id: "sensor.ewelink_snzb_02p_temperature_2"
   ha_token_env: "HA_TOKEN"
@@ -118,5 +118,3 @@ ambient:
 # Output
 output:
   directory: "./data"
-  filename_prefix: "thermal_data"
-  format: "csv" # CSV format for easy analysis

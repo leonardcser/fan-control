@@ -13,8 +13,8 @@ class SafetyError(Exception):
     pass
 
 
-class SkipPointError(Exception):
-    """Non-fatal temperature limit exceeded, skip test point."""
+class AbortPointError(Exception):
+    """Non-fatal temperature limit exceeded, abort test point."""
 
     pass
 
@@ -37,12 +37,8 @@ class SafetyMonitor:
         # Load safety limits from config
         self.emergency_cpu_temp = safety_config["emergency_cpu_temp"]
         self.emergency_gpu_temp = safety_config["emergency_gpu_temp"]
-        self.skip_cpu_temp = safety_config["skip_cpu_temp"]
-        self.skip_gpu_temp = safety_config["skip_gpu_temp"]
-
-        # Register signal handlers
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
+        self.abort_cpu_temp = safety_config["abort_cpu_temp"]
+        self.abort_gpu_temp = safety_config["abort_gpu_temp"]
 
     def check_safety(self) -> None:
         """
@@ -50,7 +46,7 @@ class SafetyMonitor:
 
         Raises:
             SafetyError: If fatal safety limits are exceeded
-            SkipPointError: If soft skip limits are exceeded
+            AbortPointError: If soft abort limits are exceeded
         """
         current_temps = {
             "cpu": self.hardware.get_cpu_temp(),
@@ -68,15 +64,15 @@ class SafetyMonitor:
                 f"GPU temperature {current_temps['gpu']:.1f}°C exceeds emergency limit {self.emergency_gpu_temp}°C"
             )
 
-        # Check skip (soft) thresholds
-        if current_temps["cpu"] and current_temps["cpu"] > self.skip_cpu_temp:
-            raise SkipPointError(
-                f"CPU temperature {current_temps['cpu']:.1f}°C exceeds skip threshold {self.skip_cpu_temp}°C"
+        # Check abort (soft) thresholds
+        if current_temps["cpu"] and current_temps["cpu"] > self.abort_cpu_temp:
+            raise AbortPointError(
+                f"CPU temperature {current_temps['cpu']:.1f}°C exceeds abort threshold {self.abort_cpu_temp}°C"
             )
 
-        if current_temps["gpu"] and current_temps["gpu"] > self.skip_gpu_temp:
-            raise SkipPointError(
-                f"GPU temperature {current_temps['gpu']:.1f}°C exceeds skip threshold {self.skip_gpu_temp}°C"
+        if current_temps["gpu"] and current_temps["gpu"] > self.abort_gpu_temp:
+            raise AbortPointError(
+                f"GPU temperature {current_temps['gpu']:.1f}°C exceeds abort threshold {self.abort_gpu_temp}°C"
             )
 
     def _apply_emergency_speeds(self) -> None:

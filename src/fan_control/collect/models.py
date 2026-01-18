@@ -35,9 +35,10 @@ class MeasurementPoint:
     stabilization_time: float  # Time waited for equilibrium (seconds)
 
     # Equilibration tracking
-    equilibration_method: str = "fixed"  # "fixed" or "dynamic"
     equilibrated: bool = True  # Was equilibrium reached?
-    equilibration_reason: Optional[str] = None  # "equilibrated", "timeout_after_120s", etc.
+    equilibration_reason: Optional[str] = (
+        None  # "equilibrated", "timeout_after_120s", etc.
+    )
 
     description: str = ""
 
@@ -53,7 +54,6 @@ class MeasurementPoint:
             "cpu_load_target": self.cpu_load_target,
             "gpu_load_target": self.gpu_load_target,
             "stabilization_time": self.stabilization_time,
-            "equilibration_method": self.equilibration_method,
             "equilibrated": self.equilibrated,
             "equilibration_reason": self.equilibration_reason,
             "description": self.description,
@@ -78,7 +78,6 @@ class MeasurementPoint:
                 "cpu_load_target",
                 "gpu_load_target",
                 "stabilization_time",
-                "equilibration_method",
                 "equilibrated",
                 "equilibration_reason",
                 "description",

@@ -11,7 +11,7 @@ import numpy as np
 
 from ..hardware import HardwareController
 from ..load import LoadOrchestrator
-from ..safety import SafetyMonitor, SkipPointError
+from ..safety import SafetyMonitor, AbortPointError
 from .models import MeasurementPoint, SafetyCheck, TestPoint
 from .plotting import generate_all_plots
 from ..utils import drop_privileges
@@ -310,7 +310,7 @@ class DataCollector:
         # Wait for equilibration
         try:
             actual_stabilization_time, eq_info = self.wait_for_equilibration()
-        except SkipPointError:
+        except AbortPointError:
             return None
 
         # Measure over duration
@@ -370,7 +370,6 @@ class DataCollector:
             cpu_load_target=point.cpu_percent,
             gpu_load_target=point.gpu_percent,
             stabilization_time=actual_stabilization_time,
-            equilibration_method=eq_info["method"],
             equilibrated=eq_info["equilibrated"],
             equilibration_reason=eq_info.get("reason"),
             description=point.description,
@@ -394,7 +393,6 @@ class DataCollector:
         )
 
         eq_info = {
-            "method": "dynamic",
             "equilibrated": False,
             "reason": None,
             "final_cpu_range": None,
@@ -414,9 +412,9 @@ class DataCollector:
             # Safety check
             try:
                 self.safety.check_safety()
-            except SkipPointError as e:
-                print(f"\n✗ SKIP: {e}")
-                print("  Restoring auto fan control and skipping this test point")
+            except AbortPointError as e:
+                print(f"\n✗ ABORT: {e}")
+                print("  Restoring auto fan control and aborting this test point")
                 self.safety._apply_emergency_speeds()
                 raise
 
