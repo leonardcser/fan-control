@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+from tqdm import tqdm
 
 from ..hardware import HardwareController
 from ..load import LoadOrchestrator
@@ -290,17 +291,17 @@ class DataCollector:
         sample_interval = self.data_config["sample_interval"]
 
         pwm_str = ", ".join([f"{k}={v}%" for k, v in point.pwm_values.items()])
-        print(f"\n{'=' * 80}")
-        print(f"Test Point: {point.description}")
-        print(f"  Load: CPU {point.cpu_percent}%, GPU {point.gpu_percent}%")
-        print(f"  PWM: {pwm_str}")
-        print(f"{'=' * 80}")
+        tqdm.write(f"\n{'=' * 80}")
+        tqdm.write(f"Test Point: {point.description}")
+        tqdm.write(f"  Load: CPU {point.cpu_percent}%, GPU {point.gpu_percent}%")
+        tqdm.write(f"  PWM: {pwm_str}")
+        tqdm.write(f"{'=' * 80}")
 
         # Measure power
         cpu_power = self.hardware.get_cpu_power()
         gpu_power = self.hardware.get_gpu_power()
 
-        print(
+        tqdm.write(
             f"  Power: CPU {cpu_power:.1f}W, GPU {gpu_power:.1f}W"
             if cpu_power and gpu_power
             else "  Power: Not available"
@@ -311,16 +312,16 @@ class DataCollector:
             point, current_power=(cpu_power, gpu_power)
         )
         if not safety_check.safe:
-            print(f"✗ Test point unsafe: {safety_check.reason}")
-            print("  Skipping this test point")
+            tqdm.write(f"✗ Test point unsafe: {safety_check.reason}")
+            tqdm.write("  Skipping this test point")
             return None
 
         # Set fan speeds
-        print("Setting fan speeds...")
+        tqdm.write("Setting fan speeds...")
         for device_id, speed in point.pwm_values.items():
             pwm_num = self.devices[device_id]["pwm_number"]
             if not self.hardware.set_fan_speed(pwm_num, speed):
-                print(f"✗ Failed to set {device_id} (PWM{pwm_num})")
+                tqdm.write(f"✗ Failed to set {device_id} (PWM{pwm_num})")
                 return None
 
         # Wait for equilibration
@@ -330,7 +331,6 @@ class DataCollector:
             return None
 
         # Measure over duration
-        print(f"Measuring for {measurement_duration}s...")
         measurements = {
             "cpu_temps": [],
             "gpu_temps": [],
@@ -339,14 +339,23 @@ class DataCollector:
             "ambient_temps": [],
         }
 
-        for _ in range(int(measurement_duration / sample_interval)):
-            measurements["cpu_temps"].append(self.hardware.get_cpu_temp())
-            measurements["gpu_temps"].append(self.hardware.get_gpu_temp())
-            measurements["cpu_powers"].append(self.hardware.get_cpu_power())
-            measurements["gpu_powers"].append(self.hardware.get_gpu_power())
-            measurements["ambient_temps"].append(self.hardware.get_ambient_temp())
+        num_samples = int(measurement_duration / sample_interval)
+        with tqdm(
+            total=num_samples,
+            desc="Measuring",
+            unit="sample",
+            leave=False,
+            bar_format="{desc}: {percentage:3.0f}% |{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+        ) as pbar:
+            for _ in range(num_samples):
+                measurements["cpu_temps"].append(self.hardware.get_cpu_temp())
+                measurements["gpu_temps"].append(self.hardware.get_gpu_temp())
+                measurements["cpu_powers"].append(self.hardware.get_cpu_power())
+                measurements["gpu_powers"].append(self.hardware.get_gpu_power())
+                measurements["ambient_temps"].append(self.hardware.get_ambient_temp())
 
-            time.sleep(sample_interval)
+                time.sleep(sample_interval)
+                pbar.update(1)
 
         # Average measurements
         cpu_temp_avg = float(
@@ -364,10 +373,10 @@ class DataCollector:
         ambient_temps = [t for t in measurements["ambient_temps"] if t is not None]
         ambient_temp_avg = float(np.nanmean(ambient_temps)) if ambient_temps else None
 
-        print(f"  Averaged: CPU {cpu_temp_avg:.1f}°C, GPU {gpu_temp_avg:.1f}°C")
-        print(f"  Power: CPU {cpu_power_avg:.1f}W, GPU {gpu_power_avg:.1f}W")
+        tqdm.write(f"  Averaged: CPU {cpu_temp_avg:.1f}°C, GPU {gpu_temp_avg:.1f}°C")
+        tqdm.write(f"  Power: CPU {cpu_power_avg:.1f}W, GPU {gpu_power_avg:.1f}W")
         if ambient_temp_avg:
-            print(f"  Ambient: {ambient_temp_avg:.1f}°C")
+            tqdm.write(f"  Ambient: {ambient_temp_avg:.1f}°C")
 
         # Convert PWM percentage to 0-255 for storage
         pwm_values_raw = {
@@ -391,7 +400,7 @@ class DataCollector:
             description=point.description,
         )
 
-        print("✓ Measurement complete")
+        tqdm.write("✓ Measurement complete")
         return measurement
 
     def wait_for_equilibration(self) -> Tuple[float, dict]:
@@ -415,65 +424,78 @@ class DataCollector:
             "final_gpu_range": None,
         }
 
-        print(f"Waiting for thermal equilibrium (max {self.eq_max_wait}s)...")
-        print(f"  Criteria: ΔT < {self.eq_threshold}°C over {self.eq_window}s window")
+        with tqdm(
+            total=self.eq_max_wait,
+            desc="Equilibrating",
+            unit="s",
+            leave=False,
+            bar_format="{desc}: {percentage:3.0f}% |{bar}| {n_fmt}/{total_fmt}s [{elapsed}<{remaining}, {postfix}]",
+        ) as pbar:
+            pbar.set_postfix_str("Initializing...")
+            while True:
+                elapsed = time.time() - start_time
+                time.sleep(self.eq_check_interval)
 
-        iteration = 0
+                # Safety check
+                try:
+                    self.safety.check_safety()
+                except AbortPointError as e:
+                    tqdm.write(f"\n✗ ABORT: {e}")
+                    tqdm.write(
+                        "  Restoring auto fan control and aborting this test point"
+                    )
+                    self.safety._apply_emergency_speeds()
+                    raise
 
-        while True:
-            elapsed = time.time() - start_time
-            time.sleep(self.eq_check_interval)
-            iteration += 1
+                # Read temperatures
+                cpu_temp = self.hardware.get_cpu_temp()
+                gpu_temp = self.hardware.get_gpu_temp()
+                window.add_reading(cpu_temp, gpu_temp, time.time())
 
-            # Safety check
-            try:
-                self.safety.check_safety()
-            except AbortPointError as e:
-                print(f"\n✗ ABORT: {e}")
-                print("  Restoring auto fan control and aborting this test point")
-                self.safety._apply_emergency_speeds()
-                raise
-
-            # Read temperatures
-            cpu_temp = self.hardware.get_cpu_temp()
-            gpu_temp = self.hardware.get_gpu_temp()
-            window.add_reading(cpu_temp, gpu_temp, time.time())
-
-            # Log progress every 10 seconds
-            if iteration % 10 == 0 or iteration == 1:
+                # Update progress bar
                 cpu_str = f"{cpu_temp:.1f}°C" if cpu_temp else "N/A"
                 gpu_str = f"{gpu_temp:.1f}°C" if gpu_temp else "N/A"
-                print(f"  {int(elapsed):3d}s: CPU {cpu_str}, GPU {gpu_str}")
-
-            # Check timeout
-            if elapsed >= self.eq_max_wait:
-                eq_info["equilibrated"] = False
-                eq_info["reason"] = f"timeout_after_{self.eq_max_wait}s"
                 _, details = window.check_equilibration(self.eq_threshold)
-                eq_info["final_cpu_range"] = details["cpu_range"]
-                eq_info["final_gpu_range"] = details["gpu_range"]
-                print(f"\n  ⚠ Timeout reached ({self.eq_max_wait}s)")
-                if details["cpu_range"] is not None:
-                    print(f"  Final CPU range: {details['cpu_range']:.2f}°C")
-                if details["gpu_range"] is not None:
-                    print(f"  Final GPU range: {details['gpu_range']:.2f}°C")
-                break
 
-            # Check equilibration (only after minimum wait)
-            if elapsed >= self.eq_min_wait:
-                is_equilibrated, details = window.check_equilibration(self.eq_threshold)
+                status = (
+                    "Stable"
+                    if details.get("cpu_stable") and details.get("gpu_stable")
+                    else "Unstable"
+                )
+                pbar.set_postfix_str(f"CPU: {cpu_str}, GPU: {gpu_str} ({status})")
+                pbar.n = min(int(elapsed), self.eq_max_wait)
+                pbar.refresh()
 
-                if is_equilibrated:
-                    eq_info["equilibrated"] = True
-                    eq_info["reason"] = "equilibrated"
+                # Check timeout
+                if elapsed >= self.eq_max_wait:
+                    eq_info["equilibrated"] = False
+                    eq_info["reason"] = f"timeout_after_{self.eq_max_wait}s"
                     eq_info["final_cpu_range"] = details["cpu_range"]
                     eq_info["final_gpu_range"] = details["gpu_range"]
-                    print(f"\n  ✓ Equilibrium reached after {elapsed:.1f}s")
+                    tqdm.write(f"\n  ⚠ Timeout reached ({self.eq_max_wait}s)")
                     if details["cpu_range"] is not None:
-                        print(f"  CPU range: {details['cpu_range']:.2f}°C")
+                        tqdm.write(f"  Final CPU range: {details['cpu_range']:.2f}°C")
                     if details["gpu_range"] is not None:
-                        print(f"  GPU range: {details['gpu_range']:.2f}°C")
+                        tqdm.write(f"  Final GPU range: {details['gpu_range']:.2f}°C")
                     break
+
+                # Check equilibration (only after minimum wait)
+                if elapsed >= self.eq_min_wait:
+                    is_equilibrated, details = window.check_equilibration(
+                        self.eq_threshold
+                    )
+
+                    if is_equilibrated:
+                        eq_info["equilibrated"] = True
+                        eq_info["reason"] = "equilibrated"
+                        eq_info["final_cpu_range"] = details["cpu_range"]
+                        eq_info["final_gpu_range"] = details["gpu_range"]
+                        tqdm.write(f"\n  ✓ Equilibrium reached after {elapsed:.1f}s")
+                        if details["cpu_range"] is not None:
+                            tqdm.write(f"  CPU range: {details['cpu_range']:.2f}°C")
+                        if details["gpu_range"] is not None:
+                            tqdm.write(f"  GPU range: {details['gpu_range']:.2f}°C")
+                        break
 
         return time.time() - start_time, eq_info
 
@@ -486,92 +508,99 @@ class DataCollector:
         """
         load_levels = self.data_config["load_levels"]
         num_samples_per_load = self.data_config.get("num_samples_per_load", 25)
+        total_target = num_samples_per_load * len(load_levels)
 
         print("\n" + "=" * 80)
         print("STARTING DATA COLLECTION")
         print("=" * 80)
         print(f"Target: {num_samples_per_load} measurements per load level")
         print(f"Load levels: {len(load_levels)}")
-        print(f"Total target measurements: {num_samples_per_load * len(load_levels)}")
+        print(f"Total target measurements: {total_target}")
 
         total_successful = 0
         total_skipped = 0
 
-        # Process each load level
-        for load_idx, load in enumerate(load_levels, 1):
-            cpu_load = load["cpu_percent"]
-            gpu_load = load["gpu_percent"]
-            description = load["description"]
+        with tqdm(
+            total=total_target,
+            desc="Total Progress",
+            unit="pt",
+            bar_format="{desc}: {percentage:3.0f}% |{bar}| {n_fmt}/{total_fmt} points [{elapsed}<{remaining}]",
+        ) as main_pbar:
+            # Process each load level
+            for load_idx, load in enumerate(load_levels, 1):
+                cpu_load = load["cpu_percent"]
+                gpu_load = load["gpu_percent"]
+                description = load["description"]
 
-            print(f"\n{'=' * 80}")
-            print(
-                f"Load Level {load_idx}/{len(load_levels)}: {description} "
-                f"(CPU {cpu_load}%, GPU {gpu_load}%)"
-            )
-            print(f"{'=' * 80}")
+                tqdm.write(f"\n{'=' * 80}")
+                tqdm.write(
+                    f"Load Level {load_idx}/{len(load_levels)}: {description} "
+                    f"(CPU {cpu_load}%, GPU {gpu_load}%)"
+                )
+                tqdm.write(f"{'=' * 80}")
 
-            # Set load for the entire group
-            if not self.load_orchestrator.set_workload(cpu_load, gpu_load):
-                print("✗ Failed to set load for this level")
-                print(f"  Skipping all {num_samples_per_load} planned measurements")
-                total_skipped += num_samples_per_load
-                continue
-
-            # Create generator for this load level
-            point_generator = self.generate_test_points_for_load(
-                cpu_load, gpu_load, description
-            )
-
-            # Collect measurements until we reach target
-            successful_for_load = 0
-            attempted_for_load = 0
-            skipped_for_load = 0
-
-            for point in point_generator:
-                # Stop when we have enough successful measurements
-                if successful_for_load >= num_samples_per_load:
-                    break
-
-                attempted_for_load += 1
-
-                # Check if point is safe (pre-check without power)
-                safety_check = self.is_safe_test_point(point)
-                if not safety_check.safe:
-                    skipped_for_load += 1
-                    print(
-                        f"\n[Load {load_idx}: {successful_for_load}/{num_samples_per_load}] "
-                        f"Skipping unsafe point (attempt {attempted_for_load}): {safety_check.reason}"
+                # Set load for the entire group
+                if not self.load_orchestrator.set_workload(cpu_load, gpu_load):
+                    tqdm.write("✗ Failed to set load for this level")
+                    tqdm.write(
+                        f"  Skipping all {num_samples_per_load} planned measurements"
                     )
+                    total_skipped += num_samples_per_load
+                    main_pbar.update(num_samples_per_load)
                     continue
 
-                # Print progress
-                print(
-                    f"\n[Load {load_idx}: {successful_for_load + 1}/{num_samples_per_load}] "
-                    f"(Attempt {attempted_for_load})"
+                # Create generator for this load level
+                point_generator = self.generate_test_points_for_load(
+                    cpu_load, gpu_load, description
                 )
 
-                # Collect measurement
-                measurement = self.collect_measurement(point)
+                # Collect measurements until we reach target
+                successful_for_load = 0
+                attempted_for_load = 0
+                skipped_for_load = 0
 
-                if measurement:
-                    self.measurements.append(measurement)
-                    successful_for_load += 1
-                    total_successful += 1
+                for point in point_generator:
+                    # Stop when we have enough successful measurements
+                    if successful_for_load >= num_samples_per_load:
+                        break
 
-                    # Save incrementally
-                    self.save_measurements(output_path)
-                else:
-                    skipped_for_load += 1
+                    attempted_for_load += 1
 
-            # Summary for this load level
-            print(f"\n{'=' * 80}")
-            print(f"Load Level {load_idx} Complete:")
-            print(f"  Successful: {successful_for_load}/{num_samples_per_load}")
-            print(f"  Skipped/Aborted: {skipped_for_load}")
-            print(f"  Total attempts: {attempted_for_load}")
-            print(f"{'=' * 80}")
+                    # Check if point is safe (pre-check without power)
+                    safety_check = self.is_safe_test_point(point)
+                    if not safety_check.safe:
+                        skipped_for_load += 1
+                        tqdm.write(
+                            f"\n[Load {load_idx}: {successful_for_load}/{num_samples_per_load}] "
+                            f"Skipping unsafe point (attempt {attempted_for_load}): {safety_check.reason}"
+                        )
+                        continue
 
-            total_skipped += skipped_for_load
+                    # Collect measurement
+                    measurement = self.collect_measurement(point)
+
+                    if measurement:
+                        self.measurements.append(measurement)
+                        successful_for_load += 1
+                        total_successful += 1
+                        main_pbar.update(1)
+
+                        # Save incrementally
+                        self.save_measurements(output_path)
+                    else:
+                        skipped_for_load += 1
+
+                # Summary for this load level
+                tqdm.write(f"\n{'=' * 80}")
+                tqdm.write(f"Load Level {load_idx} Complete:")
+                tqdm.write(
+                    f"  Successful: {successful_for_load}/{num_samples_per_load}"
+                )
+                tqdm.write(f"  Skipped/Aborted: {skipped_for_load}")
+                tqdm.write(f"  Total attempts: {attempted_for_load}")
+                tqdm.write(f"{'=' * 80}")
+
+                total_skipped += skipped_for_load
 
         # Final save and plot
         self.save_measurements(output_path, generate_plots=True)

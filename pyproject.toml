@@ -16,6 +16,7 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "matplotlib>=3.10.8",
     "seaborn>=0.13.2",
+    "tqdm>=4.67.1",
 ]
 
 [project.scripts]

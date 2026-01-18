@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from scipy.interpolate import griddata
+from tqdm import tqdm
 
 # Suppress warnings for cleaner output during data collection
 warnings.filterwarnings("ignore")
@@ -210,7 +211,12 @@ def plot_thermal_resistance(df: pd.DataFrame) -> plt.Figure:
     df_cpu["R_cpu"] = (df_cpu["T_cpu"] - df_cpu["T_amb"]) / df_cpu["P_cpu"]
 
     scatter1 = axes[0].scatter(
-        df_cpu["pwm2"], df_cpu["R_cpu"], c=df_cpu["pwm7"], s=100, alpha=0.6, cmap="coolwarm"
+        df_cpu["pwm2"],
+        df_cpu["R_cpu"],
+        c=df_cpu["pwm7"],
+        s=100,
+        alpha=0.6,
+        cmap="coolwarm",
     )
     axes[0].set_xlabel("Radiator Fan Speed (pwm2)", fontsize=12)
     axes[0].set_ylabel("CPU Thermal Resistance (°C/W)", fontsize=12)
@@ -248,7 +254,12 @@ def plot_thermal_resistance(df: pd.DataFrame) -> plt.Figure:
         cbar2.set_label("Front/Rear Fan Speed (pwm5)", fontsize=10)
     else:
         axes[1].text(
-            0.5, 0.5, "No GPU load data available", ha="center", va="center", fontsize=14
+            0.5,
+            0.5,
+            "No GPU load data available",
+            ha="center",
+            va="center",
+            fontsize=14,
         )
         axes[1].set_title("GPU Thermal Resistance", fontsize=13, fontweight="bold")
 
@@ -303,7 +314,9 @@ def plot_cooling_effectiveness(df: pd.DataFrame) -> plt.Figure:
     cbar = plt.colorbar(
         plt.cm.ScalarMappable(
             cmap="viridis",
-            norm=plt.Normalize(vmin=df_work["P_cpu"].min(), vmax=df_work["P_cpu"].max()),
+            norm=plt.Normalize(
+                vmin=df_work["P_cpu"].min(), vmax=df_work["P_cpu"].max()
+            ),
         ),
         ax=axes[0, 0],
     )
@@ -357,7 +370,9 @@ def plot_cooling_effectiveness(df: pd.DataFrame) -> plt.Figure:
     cbar = plt.colorbar(
         plt.cm.ScalarMappable(
             cmap="viridis",
-            norm=plt.Normalize(vmin=df_work["P_gpu"].min(), vmax=df_work["P_gpu"].max()),
+            norm=plt.Normalize(
+                vmin=df_work["P_gpu"].min(), vmax=df_work["P_gpu"].max()
+            ),
         ),
         ax=axes[1, 0],
     )
@@ -517,7 +532,12 @@ def plot_ambient_normalized(df: pd.DataFrame) -> plt.Figure:
         cbar.set_label("Front/Rear Fan PWM", fontsize=10)
     else:
         axes[1, 1].text(
-            0.5, 0.5, "No GPU load data available", ha="center", va="center", fontsize=14
+            0.5,
+            0.5,
+            "No GPU load data available",
+            ha="center",
+            va="center",
+            fontsize=14,
         )
 
     plt.tight_layout()
@@ -550,7 +570,9 @@ def plot_3d_surfaces(df: pd.DataFrame) -> plt.Figure:
     ax1.set_xlabel("Radiator Fan (pwm2)", fontsize=10)
     ax1.set_ylabel("Pump Speed (pwm7)", fontsize=10)
     ax1.set_zlabel("CPU Temp (°C)", fontsize=10)
-    ax1.set_title("CPU Temperature Surface\nf(pwm2, pwm7)", fontsize=12, fontweight="bold")
+    ax1.set_title(
+        "CPU Temperature Surface\nf(pwm2, pwm7)", fontsize=12, fontweight="bold"
+    )
     fig.colorbar(surf1, ax=ax1, shrink=0.5)
 
     # CPU: T_cpu as f(pwm2, P_cpu) - Power dependency
@@ -564,13 +586,20 @@ def plot_3d_surfaces(df: pd.DataFrame) -> plt.Figure:
     T_cpu_interp2 = griddata(points2, values, (P_cpu_mesh, pwm2_mesh2), method="cubic")
 
     surf2 = ax2.plot_surface(
-        P_cpu_mesh, pwm2_mesh2, T_cpu_interp2, cmap="plasma", alpha=0.8, edgecolor="none"
+        P_cpu_mesh,
+        pwm2_mesh2,
+        T_cpu_interp2,
+        cmap="plasma",
+        alpha=0.8,
+        edgecolor="none",
     )
     ax2.scatter(df["P_cpu"], df["pwm2"], df["T_cpu"], c="red", s=10, alpha=0.5)
     ax2.set_xlabel("CPU Power (W)", fontsize=10)
     ax2.set_ylabel("Radiator Fan (pwm2)", fontsize=10)
     ax2.set_zlabel("CPU Temp (°C)", fontsize=10)
-    ax2.set_title("CPU Temperature Surface\nf(P_cpu, pwm2)", fontsize=12, fontweight="bold")
+    ax2.set_title(
+        "CPU Temperature Surface\nf(P_cpu, pwm2)", fontsize=12, fontweight="bold"
+    )
     fig.colorbar(surf2, ax=ax2, shrink=0.5)
 
     # GPU: T_gpu as f(pwm4, pwm5) - Fan interaction
@@ -591,7 +620,9 @@ def plot_3d_surfaces(df: pd.DataFrame) -> plt.Figure:
     ax3.set_xlabel("Bottom Intake (pwm4)", fontsize=10)
     ax3.set_ylabel("Front/Rear Fans (pwm5)", fontsize=10)
     ax3.set_zlabel("GPU Temp (°C)", fontsize=10)
-    ax3.set_title("GPU Temperature Surface\nf(pwm4, pwm5)", fontsize=12, fontweight="bold")
+    ax3.set_title(
+        "GPU Temperature Surface\nf(pwm4, pwm5)", fontsize=12, fontweight="bold"
+    )
     fig.colorbar(surf3, ax=ax3, shrink=0.5)
 
     # GPU: T_gpu as f(pwm4, P_gpu) - Power dependency
@@ -605,13 +636,20 @@ def plot_3d_surfaces(df: pd.DataFrame) -> plt.Figure:
     T_gpu_interp2 = griddata(points4, values3, (P_gpu_mesh, pwm4_mesh2), method="cubic")
 
     surf4 = ax4.plot_surface(
-        P_gpu_mesh, pwm4_mesh2, T_gpu_interp2, cmap="plasma", alpha=0.8, edgecolor="none"
+        P_gpu_mesh,
+        pwm4_mesh2,
+        T_gpu_interp2,
+        cmap="plasma",
+        alpha=0.8,
+        edgecolor="none",
     )
     ax4.scatter(df["P_gpu"], df["pwm4"], df["T_gpu"], c="red", s=10, alpha=0.5)
     ax4.set_xlabel("GPU Power (W)", fontsize=10)
     ax4.set_ylabel("Bottom Intake (pwm4)", fontsize=10)
     ax4.set_zlabel("GPU Temp (°C)", fontsize=10)
-    ax4.set_title("GPU Temperature Surface\nf(P_gpu, pwm4)", fontsize=12, fontweight="bold")
+    ax4.set_title(
+        "GPU Temperature Surface\nf(P_gpu, pwm4)", fontsize=12, fontweight="bold"
+    )
     fig.colorbar(surf4, ax=ax4, shrink=0.5)
 
     plt.tight_layout()
@@ -659,18 +697,25 @@ def generate_all_plots(data_path: Path, output_dir: Path, quiet: bool = False) -
         ("3d_surfaces", plot_3d_surfaces),
     ]
 
-    for name, func in plot_functions:
+    for name, func in (
+        pbar := tqdm(
+            plot_functions,
+            desc="Generating plots",
+            leave=False,
+            disable=quiet,
+            unit="plot",
+            bar_format="{desc}: {percentage:3.0f}% |{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {postfix}]",
+        )
+    ):
         try:
+            pbar.set_postfix_str(f"{name}.png")
             fig = func(df)
             output_path = output_dir / f"{name}.png"
             fig.savefig(output_path, dpi=150, bbox_inches="tight")
             plt.close(fig)  # Close figure to free memory
-
-            if not quiet:
-                print(f"  ✓ {name}.png")
         except Exception as e:
             if not quiet:
-                print(f"  ✗ {name}: {e}")
+                tqdm.write(f"  ✗ {name}: {e}")
 
     if not quiet:
         print(f"  Plots saved to {output_dir}")
