@@ -49,16 +49,16 @@ data_collection:
       gpu_percent: 0
       description: "Full CPU"
     - cpu_percent: 0
-      gpu_percent: 50
+      gpu_percent: 25
       description: "Moderate GPU"
     - cpu_percent: 0
-      gpu_percent: 100
+      gpu_percent: 50
       description: "Full GPU"
     - cpu_percent: 50
-      gpu_percent: 100
+      gpu_percent: 50
       description: "Mixed load"
     - cpu_percent: 100
-      gpu_percent: 100
+      gpu_percent: 50
       description: "Full system load"
 
   # Measurement parameters
