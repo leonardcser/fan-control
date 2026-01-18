@@ -118,6 +118,8 @@ class LoadOrchestrator:
         self.load_stabilization_time = load_stabilization_time
         self.gpu_controller = GPULoadController()
         self.cpu_controller = CPULoadController()
+        self.current_cpu_load: Optional[int] = None
+        self.current_gpu_load: Optional[int] = None
 
     def set_workload(self, cpu_percent: int, gpu_percent: int) -> bool:
         """
@@ -126,20 +128,33 @@ class LoadOrchestrator:
         Returns:
             True if both loads started successfully
         """
+        # Skip if load hasn't changed
+        if (
+            self.current_cpu_load == cpu_percent
+            and self.current_gpu_load == gpu_percent
+        ):
+            return True
+
         cpu_ok = self.cpu_controller.set_load(cpu_percent)
         gpu_ok = self.gpu_controller.set_load(gpu_percent)
 
         if cpu_ok and gpu_ok:
+            self.current_cpu_load = cpu_percent
+            self.current_gpu_load = gpu_percent
             # Wait for load to stabilize
             time.sleep(self.load_stabilization_time)
             return True
 
+        self.current_cpu_load = None
+        self.current_gpu_load = None
         return False
 
     def stop_all(self) -> None:
         """Stop all load generation."""
         self.cpu_controller.stop()
         self.gpu_controller.stop()
+        self.current_cpu_load = None
+        self.current_gpu_load = None
 
         # Also kill any stray processes
         subprocess.run(

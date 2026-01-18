@@ -292,9 +292,6 @@ class DataCollector:
             print("✗ Failed to set load")
             return None
 
-        # Wait a bit for load to stabilize
-        time.sleep(self.load_stabilization_time)
-
         # Measure power
         cpu_power = self.hardware.get_cpu_power()
         gpu_power = self.hardware.get_gpu_power()
