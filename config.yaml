@@ -73,7 +73,7 @@ data_collection:
 
   # Smart test point selection
   sampling_strategy: "latin_hypercube"
-  num_samples_per_load: 25 # Target number of data points per load level
+  num_samples_per_load: 5 # Target number of data points per load level
   sampling_seed: 42
 
 # Hardware parameters
