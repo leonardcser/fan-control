@@ -139,8 +139,12 @@ def collect_mode(cfg: Dict[str, Any]) -> None:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{cfg['output']['filename_prefix']}_{timestamp}.csv"
-        output_path = output_dir / filename
+        run_name = f"{cfg['output']['filename_prefix']}_{timestamp}"
+        run_dir = output_dir / run_name
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+        filename = f"{run_name}.csv"
+        output_path = run_dir / filename
 
         print(f"\nData will be saved to: {output_path}")
 

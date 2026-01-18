@@ -292,7 +292,7 @@ Vary fan speeds, pump speed, and loads to capture the full range of operating co
 
 1. **Data Collection**: Measure temperatures across range of fan speeds, pump speeds, and workloads
    - Plots are automatically generated after each data point (configurable in `config.yaml`)
-   - Visualizations saved to `./data/plots/` directory
+    - Visualizations saved to `./data/<run_name>/plots/` directory (e.g., `./data/thermal_collection_20240118_120000/plots/`)
    - 9 plot types: correlation matrix, temp vs fans, temp vs power, pump-radiator interaction, thermal resistance, pairwise interactions, cooling effectiveness, ambient normalization, 3D surfaces
 
 2. **Parameter Fitting**: Fit the 11 thermal parameters using least-squares regression (scipy.optimize.curve_fit or similar)
