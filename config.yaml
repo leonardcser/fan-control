@@ -32,10 +32,10 @@ devices:
 # Data collection test matrix
 data_collection:
   # Fan/pump speed levels to test (percentage: 0-100)
-  pwm2_levels: [25, 50, 75, 100]
-  pwm4_levels: [0, 25, 50, 80]
-  pwm5_levels: [15, 25, 50, 70, 100]
-  pwm7_levels: [60, 80, 100]
+  pwm2_levels: [20, 100]
+  pwm4_levels: [0, 80]
+  pwm5_levels: [15, 100]
+  pwm7_levels: [60, 100]
 
   # Load levels to test
   load_levels:

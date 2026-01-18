@@ -158,9 +158,13 @@ class DataCollector:
             # For each load level, create test points from samples
             for load in load_levels:
                 for sample in scaled_samples:
-                    pwm_map = {
-                        key: int(round(val)) for key, val in zip(device_keys, sample)
-                    }
+                    pwm_map = {}
+                    for key, val in zip(device_keys, sample):
+                        speed = int(round(val))
+                        min_pwm = self.devices[key].get("min_pwm", 0)
+                        if 0 < speed < min_pwm:
+                            speed = 0
+                        pwm_map[key] = speed
                     test_points.append(
                         TestPoint(
                             pwm_values=pwm_map,
@@ -176,10 +180,13 @@ class DataCollector:
 
             for load in load_levels:
                 for _ in range(num_samples_per_load):
-                    pwm_map = {
-                        key: int(rng.choice(lvl))
-                        for key, lvl in zip(device_keys, levels)
-                    }
+                    pwm_map = {}
+                    for key, lvl in zip(device_keys, levels):
+                        speed = int(rng.choice(lvl))
+                        min_pwm = self.devices[key].get("min_pwm", 0)
+                        if 0 < speed < min_pwm:
+                            speed = 0
+                        pwm_map[key] = speed
                     test_points.append(
                         TestPoint(
                             pwm_values=pwm_map,
@@ -195,7 +202,13 @@ class DataCollector:
 
             for load in load_levels:
                 for pwm_values in itertools.product(*levels):
-                    pwm_map = {key: val for key, val in zip(device_keys, pwm_values)}
+                    pwm_map = {}
+                    for key, val in zip(device_keys, pwm_values):
+                        speed = int(val)
+                        min_pwm = self.devices[key].get("min_pwm", 0)
+                        if 0 < speed < min_pwm:
+                            speed = 0
+                        pwm_map[key] = speed
                     test_points.append(
                         TestPoint(
                             pwm_values=pwm_map,
