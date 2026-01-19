@@ -43,20 +43,20 @@ data_collection:
   #       gpu_load accepts 'gpu_load.py' flags (e.g. '--load 50 --memory 30')
   #       Empty string "" means idle/off.
   load_levels:
-    - cpu_load: ""
-      gpu_load: ""
-      description: "Idle"
-
-    # CPU focused loads (assuming 24 cores)
-    - cpu_load: "--cpu 1"
-      gpu_load: ""
-      description: "CPU (1 cores)"
-    - cpu_load: "--cpu 2"
-      gpu_load: ""
-      description: "CPU (2 cores)"
-    - cpu_load: "--cpu 4"
-      gpu_load: ""
-      description: "CPU (4 cores)"
+    # - cpu_load: ""
+    #   gpu_load: ""
+    #   description: "Idle"
+    #
+    # # CPU focused loads (assuming 24 cores)
+    # - cpu_load: "--cpu 1"
+    #   gpu_load: ""
+    #   description: "CPU (1 cores)"
+    # - cpu_load: "--cpu 2"
+    #   gpu_load: ""
+    #   description: "CPU (2 cores)"
+    # - cpu_load: "--cpu 4"
+    #   gpu_load: ""
+    #   description: "CPU (4 cores)"
     - cpu_load: "--cpu 6"
       gpu_load: ""
       description: "CPU (6 cores)"
@@ -106,7 +106,7 @@ data_collection:
   # Phase 1: Boundary sweep (optional) - all fans at max, then sweep one fan at a time from max to min
   # Phase 2: Single fan sweep (optional) - run each fan alone at varying speeds, others at 0%
   # Phase 3: Biased LHS (always) - fill in with samples biased toward lower fan speeds
-  num_samples_per_load: 40 # Target number of data points per load level
+  num_samples_per_load: 30 # Target number of data points per load level
 
   # Phase 1: Boundary Sweep - all fans at max, then each fan sweeps through these steps
   enable_boundary_sweep: false # Enable/disable Phase 1 (default: true preserves current behavior)
