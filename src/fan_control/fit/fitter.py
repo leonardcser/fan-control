@@ -55,7 +55,7 @@ def load_and_merge_csvs(run_dir: Path) -> pd.DataFrame:
 
 
 def _filter_data(
-    df: pd.DataFrame, component: str, min_power: float = 5.0
+    df: pd.DataFrame, component: str, min_power: float = 5.0, filter_equilibrated=False
 ) -> pd.DataFrame:
     """
     Filter thermal data for quality measurements.
@@ -78,7 +78,8 @@ def _filter_data(
 
     # Filter for equilibrated measurements
     initial_count = len(df)
-    # df = cast(pd.DataFrame, df[df["equilibrated"]].copy())
+    if filter_equilibrated:
+        df = cast(pd.DataFrame, df[df["equilibrated"]].copy())
     equilibrated_count = len(df)
 
     # Filter by component power

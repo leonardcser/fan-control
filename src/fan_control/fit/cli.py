@@ -72,9 +72,9 @@ def fit_mode(args) -> None:
         print(f"  - {csv_file.name}")
 
     # Create output directory for fitted model
-    model_dir = run_dir / "model"
-    model_dir.mkdir(exist_ok=True)
-    print(f"Output directory: {model_dir}\n")
+    fit_dir = run_dir / "fit"
+    fit_dir.mkdir(exist_ok=True)
+    print(f"Output directory: {fit_dir}\n")
 
     # Fit thermal model
     try:
@@ -123,7 +123,7 @@ def fit_mode(args) -> None:
         gpu_info,
         cpu_metrics,
         gpu_metrics,
-        model_dir,
+        fit_dir,
     )
 
     # Save fitted parameters to YAML
@@ -134,12 +134,12 @@ def fit_mode(args) -> None:
             return {k: convert_numpy(v) for k, v in obj.items()}
         elif isinstance(obj, list):
             return [convert_numpy(v) for v in obj]
-        elif hasattr(obj, 'item'):  # numpy scalar
+        elif hasattr(obj, "item"):  # numpy scalar
             return obj.item()
         else:
             return obj
 
-    output_yaml_path = model_dir / "fitted_parameters.yaml"
+    output_yaml_path = fit_dir / "fitted_parameters.yaml"
     csv_files = sorted(run_dir.glob("*.csv"))
     output_data = {
         "fitted_date": datetime.now().isoformat(),
@@ -158,5 +158,5 @@ def fit_mode(args) -> None:
         yaml.dump(output_data, f, default_flow_style=False, sort_keys=False)
 
     print(f"\n✓ Fitted parameters saved to: {output_yaml_path}")
-    print(f"✓ Validation plots saved to: {model_dir}/")
+    print(f"✓ Validation plots saved to: {fit_dir}/")
     print("\nFitting complete!")
