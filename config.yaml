@@ -97,17 +97,25 @@ data_collection:
   equilibration_window: 10.0 # Window to check stability (seconds)
   equilibration_threshold: 0.5 # Max temp change for equilibrium (°C) - relaxed for dynamic CPUs
   equilibration_max_wait: 60 # Maximum wait time before timeout (seconds) - reduced since threshold is looser
-  equilibration_min_wait: 10 # Minimum wait before checking (seconds)
+  equilibration_min_wait: 15 # Minimum wait before checking (seconds)
   load_stabilization_time: 10 # Time to wait after starting load (seconds)
   measurement_duration: 5 # How long to measure after stabilization (seconds)
   sample_interval: 1 # Sampling interval during measurement (seconds)
 
-  # Sampling configuration (two-phase approach)
-  # Phase 1: Boundary sweep - find where temps start rising by reducing each fan independently
-  #          Starts with all fans at max, then sweeps one fan at a time from max to min
-  # Phase 2: Biased LHS - fill in with samples biased toward lower fan speeds
-  num_samples_per_load: 15 # Target number of data points per load level
-  boundary_sweep_steps: [100, 60, 20, 0] # Percentages of each fan's range (from pwmX_levels)
+  # Sampling configuration (three-phase approach)
+  # Phase 1: Boundary sweep (optional) - all fans at max, then sweep one fan at a time from max to min
+  # Phase 2: Single fan sweep (optional) - run each fan alone at varying speeds, others at 0%
+  # Phase 3: Biased LHS (always) - fill in with samples biased toward lower fan speeds
+  num_samples_per_load: 40 # Target number of data points per load level
+
+  # Phase 1: Boundary Sweep - all fans at max, then each fan sweeps through these steps
+  enable_boundary_sweep: false # Enable/disable Phase 1 (default: true preserves current behavior)
+  boundary_sweep_steps: [60, 20, 0] # Percentages of each fan's range (from pwmX_levels)
+
+  # Phase 2: Single Fan Sweep - each fan sweeps through these steps while others at 0%
+  enable_single_fan_sweep: true # Enable/disable Phase 2 (one fan varies, others at 0%)
+  single_fan_sweep_steps: [100, 60, 20, 0] # Percentages of each fan's range (from pwmX_levels)
+
   sampling_seed: 42
   # Bias parameters for LHS phase (uses Beta distribution)
   # alpha < beta biases toward lower values (more samples in lower fan speed range)
@@ -138,13 +146,13 @@ safety:
 
   # Power-dependent minimum fan speeds
   power_dependent_minimums:
-    - component: "cpu" # Options: cpu, gpu
-      power_threshold: 100 # If power > threshold
-      pwm2_min: 20
-      pwm7_min: 80
+    # - component: "cpu" # Options: cpu, gpu
+    #   power_threshold: 100 # If power > threshold
+    #   pwm2_min: 20
+    #   pwm7_min: 80
 
   # Never test all fans at minimum simultaneously
-  min_total_cooling_effort: 15 # Sum of all PWM percentages must be >= 25%
+  min_total_cooling_effort: 0 # Sum of all PWM percentages must be >= 25%
 
 # Ambient temperature (optional but recommended for accurate model)
 ambient:
@@ -188,3 +196,9 @@ ml_model:
   targets:
     - T_cpu
     - T_gpu
+
+  # Filter out thermally-saturated data during training
+  # When temps exceed these thresholds, fans appear ineffective due to throttling
+  thermal_saturation_filter:
+    max_cpu_temp: 90.0 # Filter out T_cpu >= this (°C)
+    max_gpu_temp: 85.0 # Filter out T_gpu >= this (°C)

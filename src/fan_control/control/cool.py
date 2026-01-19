@@ -26,7 +26,7 @@ def cool_mode(args) -> None:
         hwmon_device_name=hw_cfg["hwmon_device_name"],
         cpu_sensor_name=hw_cfg["cpu_sensor_name"],
         cpu_sensor_label=hw_cfg["cpu_sensor_label"],
-        ambient_config=config.get("ambient"),
+        ambient_config=config["ambient"],
     )
 
     pwm_nums = [dev["pwm_number"] for dev in config["devices"].values()]

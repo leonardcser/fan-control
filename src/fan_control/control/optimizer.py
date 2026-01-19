@@ -33,8 +33,8 @@ class Optimizer:
         """Get (min, max) bounds for each PWM channel."""
         bounds = []
         for name in self.pwm_names:
-            dev_cfg = self.devices.get(name, {})
-            min_val = dev_cfg.get("min_pwm", 20)
+            dev_cfg = self.devices[name]
+            min_val = dev_cfg["min_pwm"]
             bounds.append((float(min_val), 100.0))
         return bounds
 
@@ -59,7 +59,7 @@ class Optimizer:
         """
         # 1. Setup Initial Guess
         if initial_guess:
-            x0 = [float(initial_guess.get(name, 50.0)) for name in self.pwm_names]
+            x0 = [float(initial_guess[name]) for name in self.pwm_names]
         else:
             # Smart Default: Start at minimums if we have no clue,
             # effectively "ramping up" if needed, rather than "cooling down"
@@ -73,7 +73,7 @@ class Optimizer:
             # We can weight pump less if we want, or louder fans more
             w = np.ones(len(self.pwm_names))
         else:
-            w = np.array([weights.get(name, 1.0) for name in self.pwm_names])
+            w = np.array([weights[name] for name in self.pwm_names])
 
         # 2. Define Objective Function
         # Scale weights to be comparable to constraint gradients (~0.01 - 0.05)
@@ -102,16 +102,29 @@ class Optimizer:
             {"type": "ineq", "fun": constraint_gpu},
         ]
 
+        # Add bound constraints for COBYLA (which doesn't support bounds argument)
+        cobyla_constraints = list(constraints)
+        for i, (min_v, max_v) in enumerate(self.bounds):
+            # x[i] >= min_v  =>  x[i] - min_v >= 0
+            cobyla_constraints.append(
+                {"type": "ineq", "fun": lambda x, idx=i, m=min_v: x[idx] - m}
+            )
+            # x[i] <= max_v  =>  max_v - x[i] >= 0
+            cobyla_constraints.append(
+                {"type": "ineq", "fun": lambda x, idx=i, M=max_v: M - x[idx]}
+            )
+
         # 4. Run Optimization
-        # Method: SLSQP with finite differences
-        # Suppress warnings by default
+        # Method: COBYLA (Gradient-free, handles constraints)
+        # We use COBYLA because the underlying model (Gradient Boosting) is non-smooth
+        # (piecewise constant), so gradient-based methods like SLSQP fail (grad=0).
+        # rhobeg=5.0 ensures we step over flat regions.
         result = minimize(
             objective,
             x0,
-            method="SLSQP",
-            bounds=self.bounds,
-            constraints=constraints,
-            options={"eps": self.eps, "ftol": 1e-6, "disp": False, "maxiter": 100},
+            method="COBYLA",
+            constraints=cobyla_constraints,
+            options={"rhobeg": 5.0, "tol": 1e-4, "disp": False, "maxiter": 200},
         )
 
         # 5. Process Result
@@ -134,8 +147,6 @@ class Optimizer:
                 pass
 
         # Convert to integer PWM values
-
-        # Convert to integer PWM values
         optimal_pwms = {}
         for i, name in enumerate(self.pwm_names):
             optimal_pwms[name] = int(round(result.x[i]))
@@ -147,6 +158,7 @@ class Optimizer:
         row = state.copy()
 
         # Update PWM values from optimizer vector
+        # Model now trained on 0-100%
         for i, name in enumerate(self.pwm_names):
             row[name] = x[i]
 

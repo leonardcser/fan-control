@@ -121,20 +121,24 @@ class DataCollector:
         self.safety_config = config["safety"]
         self.hw_config = config["hardware"]
         self.devices = config["devices"]
-        self.output_config = config.get("output", {})
-        self.load_stabilization_time = self.data_config.get(
-            "load_stabilization_time", 10
-        )
-        self.sampling_seed = self.data_config.get("sampling_seed", 42)
+        self.output_config = config["output"]
+        self.load_stabilization_time = self.data_config[
+            "load_stabilization_time"
+        ]
+        self.sampling_seed = self.data_config["sampling_seed"]
 
         # Dynamic equilibration config
-        self.eq_check_interval = self.data_config.get(
-            "equilibration_check_interval", 1.0
-        )
+        self.eq_check_interval = self.data_config[
+            "equilibration_check_interval"
+        ]
         self.eq_window = self.data_config["equilibration_window"]
-        self.eq_threshold = self.data_config.get("equilibration_threshold", 0.5)
-        self.eq_max_wait = self.data_config.get("equilibration_max_wait", 120)
-        self.eq_min_wait = self.data_config.get("equilibration_min_wait", 10)
+        self.eq_threshold = self.data_config["equilibration_threshold"]
+        self.eq_max_wait = self.data_config["equilibration_max_wait"]
+        self.eq_min_wait = self.data_config["equilibration_min_wait"]
+
+        # Phase control configuration
+        self.enable_boundary_sweep = self.data_config["enable_boundary_sweep"]
+        self.enable_single_fan_sweep = self.data_config["enable_single_fan_sweep"]
 
         # Data storage
         self.measurements: List[MeasurementPoint] = []
@@ -145,9 +149,10 @@ class DataCollector:
         """
         Generator that yields test points for a specific load level.
 
-        Uses a two-phase sampling approach:
-        1. Boundary sweep: All fans at same level, stepping down from high to low
-        2. Biased LHS: Latin Hypercube samples biased toward lower fan speeds
+        Uses a three-phase sampling approach (togglable):
+        1. Boundary sweep (optional): All fans at max, then sweep one fan from max to min
+        2. Single fan sweep (optional): Each fan varies from min to max, others at 0%
+        3. Biased LHS (always): Latin Hypercube samples biased toward lower fan speeds
 
         This allows replacing skipped/aborted points to maintain target sample count.
 
@@ -170,61 +175,82 @@ class DataCollector:
         # Parse cpu_cores once for this load level
         cpu_cores = _parse_cpu_cores(cpu_load_flags)
 
-        # === Phase 1: Boundary Sweep ===
-        # Start with all fans at max, then sweep one fan at a time from max to min
-        # This isolates each fan's contribution to cooling
-        sweep_steps = self.data_config.get("boundary_sweep_steps", [100, 70, 50, 30, 0])
-
-        # Get min/max for each device from configured levels
+        # Get min/max for each device from configured levels (needed by Phase 1 and 2)
         device_ranges = {}
         for key in device_keys:
             lvl = self.data_config[f"{key}_levels"]
             device_ranges[key] = {"min": min(lvl), "max": max(lvl)}
 
-        # Helper to convert percentage of range to PWM value
+        # Helper to convert percentage of range to PWM value (shared by Phase 1 and 2)
         def pct_to_pwm(key: str, pct: float) -> int:
             r = device_ranges[key]
             value = r["min"] + (pct / 100.0) * (r["max"] - r["min"])
             speed = int(round(value))
             # Clamp to 0 if below min_pwm (fan would stall)
-            min_pwm = self.devices[key].get("min_pwm", 0)
+            min_pwm = self.devices[key]["min_pwm"]
             if 0 < speed < min_pwm:
                 speed = 0
             return speed
 
-        # Baseline: all fans at max
-        baseline_pwm = {key: device_ranges[key]["max"] for key in device_keys}
-        yield TestPoint(
-            pwm_values=baseline_pwm.copy(),
-            cpu_load_flags=cpu_load_flags,
-            gpu_load_flags=gpu_load_flags,
-            cpu_cores=cpu_cores,
-            description=description,
-        )
+        # === Phase 1: Boundary Sweep (Optional) ===
+        # Start with all fans at max, then sweep one fan at a time from max to min
+        # This isolates each fan's contribution to cooling
+        # Runs first for safety (starts with maximum cooling)
+        if self.enable_boundary_sweep:
+            sweep_steps = self.data_config["boundary_sweep_steps"]
 
-        # Sweep each fan independently (others stay at max)
-        for sweep_key in device_keys:
-            for step_pct in sweep_steps:
-                # Skip 100% as it's already covered by baseline
-                if step_pct == 100:
-                    continue
+            # Baseline: all fans at max
+            baseline_pwm = {key: device_ranges[key]["max"] for key in device_keys}
+            yield TestPoint(
+                pwm_values=baseline_pwm.copy(),
+                cpu_load_flags=cpu_load_flags,
+                gpu_load_flags=gpu_load_flags,
+                cpu_cores=cpu_cores,
+                description=description,
+            )
 
-                pwm_map = baseline_pwm.copy()
-                pwm_map[sweep_key] = pct_to_pwm(sweep_key, step_pct)
+            # Sweep each fan independently (others stay at max)
+            for sweep_key in device_keys:
+                for step_pct in sweep_steps:
+                    # Skip 100% as it's already covered by baseline
+                    if step_pct == 100:
+                        continue
 
-                yield TestPoint(
-                    pwm_values=pwm_map,
-                    cpu_load_flags=cpu_load_flags,
-                    gpu_load_flags=gpu_load_flags,
-                    cpu_cores=cpu_cores,
-                    description=description,
-                )
+                    pwm_map = baseline_pwm.copy()
+                    pwm_map[sweep_key] = pct_to_pwm(sweep_key, step_pct)
 
-        # === Phase 2: Biased LHS ===
+                    yield TestPoint(
+                        pwm_values=pwm_map,
+                        cpu_load_flags=cpu_load_flags,
+                        gpu_load_flags=gpu_load_flags,
+                        cpu_cores=cpu_cores,
+                        description=description,
+                    )
+
+        # === Phase 2: Single Fan Sweep (Optional) ===
+        # Run each fan individually at varying speeds (min to max), all others at 0%
+        # This identifies each fan's cooling contribution in isolation
+        # Runs after boundary sweep (more extreme conditions)
+        if self.enable_single_fan_sweep:
+            for sweep_key in device_keys:
+                for step_pct in self.data_config["single_fan_sweep_steps"]:
+                    # Create PWM map with only one fan varying, others at 0
+                    pwm_map = {key: 0 for key in device_keys}
+                    pwm_map[sweep_key] = pct_to_pwm(sweep_key, step_pct)
+
+                    yield TestPoint(
+                        pwm_values=pwm_map,
+                        cpu_load_flags=cpu_load_flags,
+                        gpu_load_flags=gpu_load_flags,
+                        cpu_cores=cpu_cores,
+                        description=description,
+                    )
+
+        # === Phase 3: Biased LHS ===
         # Fill remaining samples with LHS biased toward lower fan speeds
-        alpha = self.data_config.get("sampling_bias_alpha", 2.0)
-        beta_param = self.data_config.get("sampling_bias_beta", 5.0)
-        batch_size = self.data_config.get("num_samples_per_load", 25)
+        alpha = self.data_config["sampling_bias_alpha"]
+        beta_param = self.data_config["sampling_bias_beta"]
+        batch_size = self.data_config["num_samples_per_load"]
         batch_num = 0
 
         while True:
@@ -257,7 +283,7 @@ class DataCollector:
                 pwm_map = {}
                 for key, val in zip(device_keys, sample):
                     speed = int(round(val))
-                    min_pwm = self.devices[key].get("min_pwm", 0)
+                    min_pwm = self.devices[key]["min_pwm"]
                     if 0 < speed < min_pwm:
                         speed = 0
                     pwm_map[key] = speed
@@ -291,7 +317,7 @@ class DataCollector:
 
         # Check minimum total cooling effort
         total_cooling = sum(point.pwm_values.values())
-        min_effort = self.safety_config.get("min_total_cooling_effort", 100)
+        min_effort = self.safety_config["min_total_cooling_effort"]
 
         if total_cooling < min_effort:
             return SafetyCheck(
@@ -301,9 +327,9 @@ class DataCollector:
 
         # Check power-dependent minimums (if power is known)
         if cpu_power is not None or gpu_power is not None:
-            for constraint in self.safety_config.get("power_dependent_minimums", []):
-                component = constraint.get("component", "cpu")
-                threshold = constraint.get("power_threshold", 0)
+            for constraint in self.safety_config["power_dependent_minimums"]:
+                component = constraint["component"]
+                threshold = constraint["power_threshold"]
 
                 # Select which power to check based on the component
                 relevant_power = cpu_power if component == "cpu" else gpu_power
@@ -517,7 +543,7 @@ class DataCollector:
             output_path: Path to output CSV file
         """
         load_levels = self.data_config["load_levels"]
-        num_samples_per_load = self.data_config.get("num_samples_per_load", 25)
+        num_samples_per_load = self.data_config["num_samples_per_load"]
         total_target = num_samples_per_load * len(load_levels)
 
         print("\n" + "=" * 80)
@@ -538,8 +564,8 @@ class DataCollector:
         ) as main_pbar:
             # Process each load level
             for load_idx, load in enumerate(load_levels, 1):
-                cpu_load = load.get("cpu_load", "")
-                gpu_load = load.get("gpu_load", "")
+                cpu_load = load["cpu_load"]
+                gpu_load = load["gpu_load"]
                 description = load["description"]
 
                 tqdm.write(f"\n{'=' * 80}")

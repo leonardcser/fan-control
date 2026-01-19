@@ -50,7 +50,10 @@ class HardwareController:
 
     def get_ambient_temp(self) -> Optional[float]:
         """Fetch ambient temperature from configured source (e.g. Home Assistant)."""
-        source = self.ambient_config.get("source")
+        if not self.ambient_config:
+            return None
+
+        source = self.ambient_config["source"]
         if not source:
             return None
 
@@ -58,7 +61,7 @@ class HardwareController:
             try:
                 url = f"{self.ambient_config['ha_url'].rstrip('/')}/api/states/{self.ambient_config['ha_entity_id']}"
                 token = os.environ.get(
-                    self.ambient_config.get("ha_token_env", "HA_TOKEN")
+                    self.ambient_config["ha_token_env"]
                 )
 
                 if not token:

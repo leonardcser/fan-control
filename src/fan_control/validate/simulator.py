@@ -59,8 +59,8 @@ def run_simulation(model_path: Path, config: Dict, output_dir: Path):
     # This is more realistic than starting at 50%
     last_pwms = {}
     for name in optimizer.pwm_names:
-        dev_cfg = config["devices"].get(name, {})
-        last_pwms[name] = float(dev_cfg.get("min_pwm", 20))
+        dev_cfg = config["devices"][name]
+        last_pwms[name] = float(dev_cfg["min_pwm"])
 
     import time as time_module
 

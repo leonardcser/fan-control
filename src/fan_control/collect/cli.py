@@ -81,12 +81,12 @@ def collect_mode(args) -> None:
     # Initialize hardware
     print("Initializing hardware...")
     try:
-        hw_cfg = cfg.get("hardware", {})
-        ambient_cfg = cfg.get("ambient", {})
+        hw_cfg = cfg["hardware"]
+        ambient_cfg = cfg["ambient"]
 
         # Validate HA Token if needed
-        if ambient_cfg.get("source") == "home-assistant":
-            token_env = ambient_cfg.get("ha_token_env", "HA_TOKEN")
+        if ambient_cfg["source"] == "home-assistant":
+            token_env = ambient_cfg["ha_token_env"]
             if not os.environ.get(token_env):
                 print(
                     f"✗ Error: Ambient mode enabled but {token_env} is not set in environment"
@@ -100,10 +100,10 @@ def collect_mode(args) -> None:
             hwmon_device_name=hw_cfg["hwmon_device_name"],
             cpu_sensor_name=hw_cfg["cpu_sensor_name"],
             cpu_sensor_label=hw_cfg["cpu_sensor_label"],
-            max_retries=hw_cfg.get("max_retries", 3),
-            retry_delay=hw_cfg.get("retry_delay", 0.1),
-            command_timeout=hw_cfg.get("command_timeout", 5),
-            ambient_timeout=hw_cfg.get("ambient_timeout", 300),
+            max_retries=hw_cfg["max_retries"],
+            retry_delay=hw_cfg["retry_delay"],
+            command_timeout=hw_cfg["command_timeout"],
+            ambient_timeout=hw_cfg["ambient_timeout"],
             ambient_config=ambient_cfg,
         )
         print(f"✓ Found hwmon device at: {hardware.hwmon_path}\n")
@@ -113,9 +113,9 @@ def collect_mode(args) -> None:
 
     # Initialize load orchestrator
     load_orchestrator = LoadOrchestrator(
-        load_stabilization_time=cfg.get("data_collection", {}).get(
-            "load_stabilization_time", 10
-        ),
+        load_stabilization_time=cfg["data_collection"][
+            "load_stabilization_time"
+        ],
     )
 
     # Get device PWM mappings for safety monitor

@@ -31,7 +31,7 @@ class FanController:
             hwmon_device_name=hw_cfg["hwmon_device_name"],
             cpu_sensor_name=hw_cfg["cpu_sensor_name"],
             cpu_sensor_label=hw_cfg["cpu_sensor_label"],
-            ambient_config=self.config.get("ambient"),
+            ambient_config=self.config["ambient"],
         )
 
         # Initialize Optimizer
