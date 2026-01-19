@@ -80,6 +80,12 @@ class SafetyMonitor:
         for _, pwm_num in self.device_pwms.items():
             self.hardware.set_pwm_mode(pwm_num, 5)
 
+    def _apply_abort_speeds(self) -> None:
+        """Set fans to full speed when aborting a test point."""
+        print("Setting all fans to 100% speed...")
+        fan_pwms = list(self.device_pwms.values())
+        self.hardware.set_all_fans_max(fan_pwms)
+
     def emergency_shutdown(self, reason: str) -> None:
         """Full emergency shutdown."""
         print(f"\n{'=' * 80}")
