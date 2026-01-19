@@ -49,9 +49,7 @@ def load_and_merge_csvs(run_dir: Path) -> pd.DataFrame:
         raise ValueError(f"No valid CSV files could be loaded from: {run_dir}")
 
     merged_df = pd.concat(dfs, ignore_index=True)
-    print(
-        f"  Total merged: {len(merged_df)} rows from {len(csv_files)} files"
-    )
+    print(f"  Total merged: {len(merged_df)} rows from {len(csv_files)} files")
 
     return merged_df
 
@@ -80,7 +78,7 @@ def _filter_data(
 
     # Filter for equilibrated measurements
     initial_count = len(df)
-    df = cast(pd.DataFrame, df[df["equilibrated"]].copy())
+    # df = cast(pd.DataFrame, df[df["equilibrated"]].copy())
     equilibrated_count = len(df)
 
     # Filter by component power

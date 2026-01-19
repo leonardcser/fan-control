@@ -656,25 +656,31 @@ def plot_3d_surfaces(df: pd.DataFrame) -> plt.Figure:
     return fig
 
 
-def generate_all_plots(data_path: Path, output_dir: Path, quiet: bool = False) -> None:
+def generate_all_plots(
+    data: pd.DataFrame | Path, output_dir: Path, quiet: bool = False
+) -> None:
     """
     Generate all thermal data visualization plots.
 
     Args:
-        data_path: Path to the CSV data file
+        data: Path to the CSV data file OR a pandas DataFrame
         output_dir: Directory to save plots
         quiet: If True, suppress console output
     """
     if not quiet:
-        print(f"\nGenerating plots from {data_path}...")
+        source = f"from {data}" if isinstance(data, Path) else "from DataFrame"
+        print(f"\nGenerating plots {source}...")
 
-    # Load data
-    try:
-        df = pd.read_csv(data_path)
-    except Exception as e:
-        if not quiet:
-            print(f"  ✗ Failed to load data: {e}")
-        return
+    # Load data if path provided
+    if isinstance(data, Path):
+        try:
+            df = pd.read_csv(data)
+        except Exception as e:
+            if not quiet:
+                print(f"  ✗ Failed to load data: {e}")
+            return
+    else:
+        df = data
 
     if len(df) < 2:
         if not quiet:

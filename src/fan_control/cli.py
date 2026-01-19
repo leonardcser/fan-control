@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 
 from .collect.cli import collect_mode
 from .fit.cli import fit_mode
+from .plot.cli import plot_mode
 
 
 def main() -> None:
@@ -24,6 +25,9 @@ Example usage:
 
   # Fit thermal model from collected data
   fan-control fit --config config.yaml --run data/fan_control_20260119_040722
+
+  # Generate visualization plots from collected data
+  fan-control plot --run data/fan_control_20260119_040722
 
 The collected data will be used to fit the thermal model parameters
 described in PHYSICS_MODEL.md.
@@ -65,12 +69,25 @@ described in PHYSICS_MODEL.md.
         help="Path to run directory containing collected CSV data",
     )
 
+    # Plot subcommand
+    plot_parser = subparsers.add_parser(
+        "plot",
+        help="Generate visualization plots from collected data",
+    )
+    plot_parser.add_argument(
+        "--run",
+        required=True,
+        help="Path to run directory containing collected CSV data",
+    )
+
     args = parser.parse_args()
 
     if args.command == "fit":
         fit_mode(args)
     elif args.command == "collect":
         collect_mode(args)
+    elif args.command == "plot":
+        plot_mode(args)
 
 
 if __name__ == "__main__":

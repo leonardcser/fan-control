@@ -14,7 +14,7 @@ from ..hardware import HardwareController
 from ..load import LoadOrchestrator
 from ..safety import SafetyMonitor, AbortPointError
 from .models import MeasurementPoint, SafetyCheck, TestPoint
-from .plotting import generate_all_plots
+from ..plot.plotting import generate_all_plots
 from ..utils import drop_privileges
 
 
@@ -551,8 +551,8 @@ class DataCollector:
 
                 total_skipped += skipped_for_load
 
-        # Final save and plot
-        self.save_measurements(output_path, generate_plots=True)
+        # Final save
+        self.save_measurements(output_path, generate_plots=False)
 
         # Final summary
         print("\n" + "=" * 80)
