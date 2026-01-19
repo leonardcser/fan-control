@@ -43,23 +43,20 @@ data_collection:
   #       gpu_load accepts 'gpu_load.py' flags (e.g. '--load 50 --memory 30')
   #       Empty string "" means idle/off.
   load_levels:
-    # - cpu_load: ""
-    #   gpu_load: ""
-    #   description: "Idle"
+    - cpu_load: ""
+      gpu_load: ""
+      description: "Idle"
     #
     # # CPU focused loads (assuming 24 cores)
-    # - cpu_load: "--cpu 1"
-    #   gpu_load: ""
-    #   description: "CPU (1 cores)"
-    # - cpu_load: "--cpu 2"
-    #   gpu_load: ""
-    #   description: "CPU (2 cores)"
-    # - cpu_load: "--cpu 4"
-    #   gpu_load: ""
-    #   description: "CPU (4 cores)"
-    - cpu_load: "--cpu 6"
+    - cpu_load: "--cpu 1"
       gpu_load: ""
-      description: "CPU (6 cores)"
+      description: "CPU (1 cores)"
+    - cpu_load: "--cpu 2"
+      gpu_load: ""
+      description: "CPU (2 cores)"
+    - cpu_load: "--cpu 4"
+      gpu_load: ""
+      description: "CPU (4 cores)"
     - cpu_load: "--cpu 10"
       gpu_load: ""
       description: "CPU (10 cores)"
@@ -102,25 +99,24 @@ data_collection:
   measurement_duration: 5 # How long to measure after stabilization (seconds)
   sample_interval: 1 # Sampling interval during measurement (seconds)
 
-  # Sampling configuration (three-phase approach)
-  # Phase 1: Boundary sweep (optional) - all fans at max, then sweep one fan at a time from max to min
-  # Phase 2: Single fan sweep (optional) - run each fan alone at varying speeds, others at 0%
-  # Phase 3: Biased LHS (always) - fill in with samples biased toward lower fan speeds
+  # Sampling configuration (two-phase approach)
+  # Phase 1: Single fan sweep (optional) - run each fan alone at varying speeds, others at min
+  # Phase 2: Contrast sampling (always) - fill in with samples biased toward lower fan speeds
   num_samples_per_load: 30 # Target number of data points per load level
 
-  # Phase 1: Boundary Sweep - all fans at max, then each fan sweeps through these steps
-  enable_boundary_sweep: false # Enable/disable Phase 1 (default: true preserves current behavior)
-  boundary_sweep_steps: [60, 20, 0] # Percentages of each fan's range (from pwmX_levels)
-
-  # Phase 2: Single Fan Sweep - each fan sweeps through these steps while others at 0%
-  enable_single_fan_sweep: true # Enable/disable Phase 2 (one fan varies, others at 0%)
+  # Phase 1: Single Fan Sweep - each fan sweeps through these steps while others at min
+  enable_single_fan_sweep: true # Enable/disable Phase 1 (one fan varies, others at min)
   single_fan_sweep_steps: [100, 60, 20, 0] # Percentages of each fan's range (from pwmX_levels)
+  single_fan_sweep_repeats: 2 # Number of times to repeat the sweep (for noise averaging)
 
   sampling_seed: 42
-  # Bias parameters for LHS phase (uses Beta distribution)
-  # alpha < beta biases toward lower values (more samples in lower fan speed range)
-  sampling_bias_alpha: 2.0 # Beta distribution alpha parameter
-  sampling_bias_beta: 5.0 # Beta distribution beta parameter (higher = more bias to low end)
+
+  # Phase 2: Contrast Sampling - 1-2 fans high, rest low
+  # This creates data where individual fan contributions are visible
+  contrast_sampling:
+    num_high_fans: [1, 2] # Randomly pick 1 or 2 fans to be "high" per sample
+    high_range: [60, 100] # High fans sample uniformly from this % range
+    low_range: [0, 40] # Low fans sample (beta-biased toward low end) from this % range
 
 # Hardware parameters
 hardware:

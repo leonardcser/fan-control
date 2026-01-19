@@ -137,7 +137,6 @@ class DataCollector:
         self.eq_min_wait = self.data_config["equilibration_min_wait"]
 
         # Phase control configuration
-        self.enable_boundary_sweep = self.data_config["enable_boundary_sweep"]
         self.enable_single_fan_sweep = self.data_config["enable_single_fan_sweep"]
 
         # Data storage
@@ -149,10 +148,9 @@ class DataCollector:
         """
         Generator that yields test points for a specific load level.
 
-        Uses a three-phase sampling approach (togglable):
-        1. Boundary sweep (optional): All fans at max, then sweep one fan from max to min
-        2. Single fan sweep (optional): Each fan varies from min to max, others at 0%
-        3. Biased LHS (always): Latin Hypercube samples biased toward lower fan speeds
+        Uses a two-phase sampling approach (togglable):
+        1. Single fan sweep (optional): Each fan varies from min to max, others at min
+        2. Contrast sampling (always): Latin Hypercube samples biased toward lower fan speeds
 
         This allows replacing skipped/aborted points to maintain target sample count.
 
@@ -164,8 +162,6 @@ class DataCollector:
         Yields:
             TestPoint instances
         """
-        from scipy.stats import qmc
-
         device_keys = list(self.devices.keys())
         num_devices = len(device_keys)
 
@@ -192,49 +188,17 @@ class DataCollector:
                 speed = 0
             return speed
 
-        # === Phase 1: Boundary Sweep (Optional) ===
-        # Start with all fans at max, then sweep one fan at a time from max to min
-        # This isolates each fan's contribution to cooling
-        # Runs first for safety (starts with maximum cooling)
-        if self.enable_boundary_sweep:
-            sweep_steps = self.data_config["boundary_sweep_steps"]
-
-            # Baseline: all fans at max
-            baseline_pwm = {key: device_ranges[key]["max"] for key in device_keys}
-            yield TestPoint(
-                pwm_values=baseline_pwm.copy(),
-                cpu_load_flags=cpu_load_flags,
-                gpu_load_flags=gpu_load_flags,
-                cpu_cores=cpu_cores,
-                description=description,
-            )
-
-            # Sweep each fan independently (others stay at max)
-            for sweep_key in device_keys:
-                for step_pct in sweep_steps:
-                    # Skip 100% as it's already covered by baseline
-                    if step_pct == 100:
-                        continue
-
-                    pwm_map = baseline_pwm.copy()
-                    pwm_map[sweep_key] = pct_to_pwm(sweep_key, step_pct)
-
-                    yield TestPoint(
-                        pwm_values=pwm_map,
-                        cpu_load_flags=cpu_load_flags,
-                        gpu_load_flags=gpu_load_flags,
-                        cpu_cores=cpu_cores,
-                        description=description,
-                    )
-
-        # === Phase 2: Single Fan Sweep (Optional) ===
+        # === Phase 1: Single Fan Sweep (Optional) ===
         # Run each fan individually at varying speeds (min to max), others at their minimum configured level
         # This identifies each fan's cooling contribution while maintaining baseline cooling
-        # Runs after boundary sweep (more extreme conditions)
         if self.enable_single_fan_sweep:
+            num_repeats = self.data_config.get("single_fan_sweep_repeats", 1)
+
+            # First, generate unique points (deduplicated)
+            unique_points = []
+            seen_points = set()
             for sweep_key in device_keys:
                 for step_pct in self.data_config["single_fan_sweep_steps"]:
-                    # Create PWM map with one fan varying, others at their minimum level
                     pwm_map = {}
                     for key in device_keys:
                         if key == sweep_key:
@@ -242,18 +206,30 @@ class DataCollector:
                         else:
                             pwm_map[key] = device_ranges[key]["min"]
 
+                    point_tuple = tuple(pwm_map[k] for k in device_keys)
+                    if point_tuple not in seen_points:
+                        seen_points.add(point_tuple)
+                        unique_points.append(pwm_map)
+
+            # Then yield each unique point num_repeats times
+            for _repeat in range(num_repeats):
+                for pwm_map in unique_points:
                     yield TestPoint(
-                        pwm_values=pwm_map,
+                        pwm_values=pwm_map.copy(),
                         cpu_load_flags=cpu_load_flags,
                         gpu_load_flags=gpu_load_flags,
                         cpu_cores=cpu_cores,
                         description=description,
                     )
 
-        # === Phase 3: Biased LHS ===
-        # Fill remaining samples with LHS biased toward lower fan speeds
-        alpha = self.data_config["sampling_bias_alpha"]
-        beta_param = self.data_config["sampling_bias_beta"]
+        # === Phase 2: Contrast Sampling ===
+        # Generate samples with contrast: 1-2 fans high, rest low
+        # This ensures we capture each fan's individual contribution
+        contrast_config = self.data_config.get("contrast_sampling", {})
+        num_high_fans_choices = contrast_config.get("num_high_fans", [1, 2])
+        high_range = contrast_config.get("high_range", [60, 100])
+        low_range = contrast_config.get("low_range", [0, 40])
+
         batch_size = self.data_config["num_samples_per_load"]
         batch_num = 0
 
@@ -261,35 +237,38 @@ class DataCollector:
             seed = self.sampling_seed + batch_num
             rng = np.random.default_rng(seed=seed)
 
-            # Generate LHS samples in [0,1] for stratification
-            sampler = qmc.LatinHypercube(d=num_devices, scramble=True, seed=seed)
-            uniform_samples = sampler.random(n=batch_size)
+            for _ in range(batch_size):
+                # Randomly choose how many fans will be "high" (1 or 2)
+                num_high = rng.choice(num_high_fans_choices)
 
-            # Generate Beta-distributed samples for bias toward lower values
-            # Beta(2, 5) has mode at ~0.2, skewing samples toward lower fan speeds
-            biased_samples = rng.beta(alpha, beta_param, size=uniform_samples.shape)
-
-            # Combine LHS stratification with Beta marginals via rank matching
-            # This preserves good space coverage while biasing toward low values
-            for dim in range(num_devices):
-                uniform_ranks = np.argsort(np.argsort(uniform_samples[:, dim]))
-                sorted_biased = np.sort(biased_samples[:, dim])
-                biased_samples[:, dim] = sorted_biased[uniform_ranks]
-
-            # Scale to PWM ranges for each device
-            scaled_samples = np.zeros_like(biased_samples)
-            for i, lvl in enumerate(levels):
-                scaled_samples[:, i] = lvl.min() + biased_samples[:, i] * (
-                    lvl.max() - lvl.min()
+                # Randomly select which fans will be high
+                high_fan_indices = rng.choice(
+                    num_devices, size=num_high, replace=False
                 )
 
-            for sample in scaled_samples:
                 pwm_map = {}
-                for key, val in zip(device_keys, sample):
-                    speed = int(round(val))
+                for i, key in enumerate(device_keys):
+                    lvl = levels[i]
+                    lvl_min, lvl_max = lvl.min(), lvl.max()
+
+                    if i in high_fan_indices:
+                        # High fan: uniform sample from high_range (as % of device range)
+                        pct = rng.uniform(high_range[0], high_range[1]) / 100.0
+                    else:
+                        # Low fan: beta-biased sample from low_range
+                        # Beta(2, 5) biases toward lower end of the range
+                        beta_val = rng.beta(2.0, 5.0)
+                        low_pct_range = (low_range[1] - low_range[0]) / 100.0
+                        pct = (low_range[0] / 100.0) + beta_val * low_pct_range
+
+                    # Convert percentage to actual PWM value
+                    speed = int(round(lvl_min + pct * (lvl_max - lvl_min)))
+
+                    # Clamp: if below min_pwm but > 0, set to 0 (fan would stall)
                     min_pwm = self.devices[key]["min_pwm"]
                     if 0 < speed < min_pwm:
                         speed = 0
+
                     pwm_map[key] = speed
 
                 yield TestPoint(
