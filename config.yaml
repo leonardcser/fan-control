@@ -131,65 +131,34 @@ ambient:
 output:
   directory: "./data"
 
-# Thermal model configuration (for fitting)
-# SIMPLIFIED MODEL based on data analysis showing minimal cooling effects
-model:
-  # Model structure - defines which devices affect which components
-  # CONDUCTANCE MODEL: R_total = R_serial + 1 / (G_base + sum(k*pwm))
-  # R_base_* -> R_serial (Irreducible resistance)
-  # R_*_min  -> G_base (Baseline natural conductance)
-  # k_*      -> Conductance contribution
-  structure:
-    cpu:
-      base_resistance: R_base_cpu # Irreducible R (serial)
-      pump_effect:
-        device: pwm7
-        param: k_pump
-      fans:
-        pwm2:
-          param: k_rad_fan
-          pump_coupled: false
-        pwm4:
-          param: k_intake
-        pwm5:
-          param: k_exhaust
-      baseline: R_min # Baseline Conductance (G_base)
-
-    gpu:
-      base_resistance: R_base_gpu # Irreducible R (serial)
-      fans:
-        pwm4:
-          param: k_gpu_intake
-        pwm5:
-          param: k_gpu_exhaust
-      baseline: R_gpu_min # Baseline Conductance (G_base)
-
-  # Initial guesses - adjusted for Conductance Model
-  # CPU R~0.38 => R_serial~0.30 + 1/G~0.08 (G~12.5)
-  # GPU R~0.13 => R_serial~0.10 + 1/G~0.03 (G~33.0)
-  initial_guesses:
-    R_base_cpu: 0.30 # Irreducible resistance
-    k_pump: 5.0 # Pump conductance contrib
-    k_rad_fan: 5.0 # Rad fan conductance contrib
-    k_intake: 2.0 # Intake conductance contrib
-    k_exhaust: 2.0 # Exhaust conductance contrib
-    R_min: 10.0 # G_base (Baseline Conductance)
-
-    R_base_gpu: 0.10 # Irreducible resistance
-    k_gpu_intake: 10.0 # Intake conductance contrib
-    k_gpu_exhaust: 10.0 # Exhaust conductance contrib
-    R_gpu_min: 30.0 # G_base (Baseline Conductance)
-
-  # Parameter bounds - appropriate for Conductance Model
-  bounds:
-    R_base_cpu: [0.10, 0.40] # R_serial must be < Total R (~0.4)
-    k_pump: [0, 50.0] # Conductance gain
-    k_rad_fan: [0, 50.0]
-    k_intake: [0, 50.0]
-    k_exhaust: [0, 50.0]
-    R_min: [1.0, 100.0] # G_base (Conductance)
-
-    R_base_gpu: [0.05, 0.15] # R_serial must be < Total R (~0.13)
-    k_gpu_intake: [0, 100.0]
-    k_gpu_exhaust: [0, 100.0]
-    R_gpu_min: [10.0, 200.0] # G_base (Conductance)
+# ML Model Configuration
+# Uses Gradient Boosting Regressor (sklearn) instead of physics equations.
+# This handles complex non-linearities and regime shifts (e.g. 6-core vs 24-core heat density).
+ml_model:
+  type: "gradient_boosting"
+  
+  # Features to use for prediction
+  features:
+    - P_cpu
+    - P_gpu
+    - T_amb
+    - pwm2
+    - pwm4
+    - pwm5
+    - pwm7
+  
+  # Engineered features (automatically generated)
+  # inv_pwm* = 1 / (pwm + 10)
+  # P_*_pwm* = Power * inv_pwm (Interaction)
+  
+  # Hyperparameters for GradientBoostingRegressor
+  hyperparameters:
+    n_estimators: 200
+    learning_rate: 0.1
+    max_depth: 4
+    random_state: 42
+  
+  # Targets to train models for
+  targets:
+    - T_cpu
+    - T_gpu

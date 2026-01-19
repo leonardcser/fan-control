@@ -1,10 +1,10 @@
 """CLI interface for thermal data visualization."""
 
 import sys
+import pandas as pd
 from pathlib import Path
 
 from .plotting import generate_all_plots
-from ..fit.fitter import load_and_merge_csvs
 
 
 def plot_mode(args) -> None:
@@ -37,7 +37,10 @@ def plot_mode(args) -> None:
 
     # Load and merge data
     try:
-        df = load_and_merge_csvs(run_dir)
+        df_list = []
+        for f in csv_files:
+            df_list.append(pd.read_csv(f))
+        df = pd.concat(df_list, ignore_index=True)
     except Exception as e:
         print(f"✗ Error loading data: {e}")
         sys.exit(1)
@@ -52,6 +55,9 @@ def plot_mode(args) -> None:
         generate_all_plots(df, plots_dir)
     except Exception as e:
         print(f"✗ Error generating plots: {e}")
+        import traceback
+
+        traceback.print_exc()
         sys.exit(1)
 
     print("\n✓ Visualization plots generated successfully!")

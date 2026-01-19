@@ -1,33 +1,27 @@
 """
-CLI interface for thermal model fitting.
-
-Fits thermal model parameters from collected data and generates validation reports.
+CLI interface for thermal model training (ML).
 """
 
 import sys
-from datetime import datetime
 from pathlib import Path
-
 import yaml
+import logging
 
-from .fitter import fit_thermal_model
-from .validator import (
-    compute_validation_metrics,
-    print_validation_summary,
-    check_parameter_validity,
-)
-from .plotting import generate_validation_plots
+from .train import train_model
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 
 def fit_mode(args) -> None:
     """
-    Model fitting mode - fit thermal model parameters from collected data.
+    Model training mode - train ML model from collected data.
 
     Args:
         args: Parsed command-line arguments with config and run attributes
     """
     print("\n" + "=" * 70)
-    print("THERMAL MODEL PARAMETER FITTING")
+    print("THERMAL MODEL TRAINING (ML)")
     print("=" * 70 + "\n")
 
     # Load configuration
@@ -43,14 +37,9 @@ def fit_mode(args) -> None:
         print(f"✗ Error parsing config file: {e}")
         sys.exit(1)
 
-    # Validate model section exists
-    if "model" not in config:
-        print("✗ Config missing 'model' section")
-        print("\nPlease add model configuration to config.yaml with:")
-        print("  - structure: Define which devices affect CPU/GPU")
-        print("  - initial_guesses: Starting parameter values")
-        print("  - bounds: Parameter constraints [lower, upper]")
-        print("\nSee PHYSICS_MODEL.md for details on the model structure.")
+    # Validate ml_model section exists
+    if "ml_model" not in config:
+        print("✗ Config missing 'ml_model' section")
         sys.exit(1)
 
     # Validate run directory
@@ -59,104 +48,20 @@ def fit_mode(args) -> None:
         print(f"✗ Run directory not found: {run_dir}")
         sys.exit(1)
 
-    # Check for CSV files
-    csv_files = sorted(run_dir.glob("*.csv"))
-    if not csv_files:
-        print(f"✗ No CSV files found in run directory: {run_dir}")
-        sys.exit(1)
+    # Create output directory
+    output_dir = run_dir / "fit"
 
     print(f"Config: {config_path}")
-    print(f"Run directory: {run_dir}")
-    print(f"CSV files found: {len(csv_files)}")
-    for csv_file in csv_files:
-        print(f"  - {csv_file.name}")
+    print(f"Data directory: {run_dir}")
+    print(f"Output directory: {output_dir}\n")
 
-    # Create output directory for fitted model
-    fit_dir = run_dir / "fit"
-    fit_dir.mkdir(exist_ok=True)
-    print(f"Output directory: {fit_dir}\n")
-
-    # Fit thermal model
     try:
-        all_fitted_params, all_covariances, all_fit_info = fit_thermal_model(
-            run_dir, config
-        )
-    except ValueError as e:
-        print(f"\n✗ Fitting failed: {e}")
-        sys.exit(1)
+        train_model(config, run_dir, output_dir)
+        print("\n✓ Training complete!")
+        print(f"✓ Model saved to: {output_dir}/thermal_model.pkl")
     except Exception as e:
-        print(f"\n✗ Unexpected error during fitting: {e}")
+        print(f"\n✗ Training failed: {e}")
         import traceback
 
         traceback.print_exc()
         sys.exit(1)
-
-    # Extract results
-    cpu_params = all_fitted_params["cpu"]
-    gpu_params = all_fitted_params["gpu"]
-    cpu_cov = all_covariances["cpu"]
-    gpu_cov = all_covariances["gpu"]
-    cpu_info = all_fit_info["cpu"]
-    gpu_info = all_fit_info["gpu"]
-
-    # Compute validation metrics
-    cpu_metrics = compute_validation_metrics(
-        cpu_info["T_measured"], cpu_info["T_predicted"]
-    )
-    gpu_metrics = compute_validation_metrics(
-        gpu_info["T_measured"], gpu_info["T_predicted"]
-    )
-
-    # Print validation summary
-    print_validation_summary(cpu_metrics, gpu_metrics, cpu_params, gpu_params)
-
-    # Check parameter validity
-    check_parameter_validity(cpu_params, gpu_params)
-
-    # Generate validation plots
-    generate_validation_plots(
-        cpu_params,
-        gpu_params,
-        cpu_cov,
-        gpu_cov,
-        cpu_info,
-        gpu_info,
-        cpu_metrics,
-        gpu_metrics,
-        fit_dir,
-    )
-
-    # Save fitted parameters to YAML
-    # Convert numpy types to native Python for readable YAML
-    def convert_numpy(obj):
-        """Recursively convert numpy types to Python native types."""
-        if isinstance(obj, dict):
-            return {k: convert_numpy(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [convert_numpy(v) for v in obj]
-        elif hasattr(obj, "item"):  # numpy scalar
-            return obj.item()
-        else:
-            return obj
-
-    output_yaml_path = fit_dir / "fitted_parameters.yaml"
-    csv_files = sorted(run_dir.glob("*.csv"))
-    output_data = {
-        "fitted_date": datetime.now().isoformat(),
-        "config_source": str(config_path),
-        "data_source": str(run_dir),
-        "data_files": [csv_file.name for csv_file in csv_files],
-        "fitted_parameters": convert_numpy({**cpu_params, **gpu_params}),
-        "validation_metrics": {
-            "cpu": convert_numpy(cpu_metrics),
-            "gpu": convert_numpy(gpu_metrics),
-        },
-        "model_structure": config["model"]["structure"],
-    }
-
-    with open(output_yaml_path, "w") as f:
-        yaml.dump(output_data, f, default_flow_style=False, sort_keys=False)
-
-    print(f"\n✓ Fitted parameters saved to: {output_yaml_path}")
-    print(f"✓ Validation plots saved to: {fit_dir}/")
-    print("\nFitting complete!")
