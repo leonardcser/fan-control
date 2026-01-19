@@ -65,7 +65,7 @@ data_collection:
   equilibration_check_interval: 1 # How often to sample temperature (seconds)
   equilibration_window: 10.0 # Window to check stability (seconds)
   equilibration_threshold: 0.1 # Max temp change for equilibrium (°C)
-  equilibration_max_wait: 90 # Maximum wait time before timeout (seconds)
+  equilibration_max_wait: 120 # Maximum wait time before timeout (seconds)
   equilibration_min_wait: 10 # Minimum wait before checking (seconds)
   load_stabilization_time: 10 # Time to wait after starting load (seconds)
   measurement_duration: 5 # How long to measure after stabilization (seconds)
@@ -73,7 +73,7 @@ data_collection:
 
   # Smart test point selection
   sampling_strategy: "latin_hypercube" # Options: latin_hypercube (recommended), random, grid
-  num_samples_per_load: 5 # Target number of data points per load level
+  num_samples_per_load: 50 # Target number of data points per load level
   sampling_seed: 42
 
 # Hardware parameters
