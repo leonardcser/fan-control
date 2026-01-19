@@ -45,6 +45,18 @@ class ThermalModel:
         """Apply physics-inspired feature engineering."""
         df_eng = df.copy()
 
+        # 0. CPU cores and heat flux density
+        # Heat concentrated in fewer cores = higher local temperature
+        if "cpu_cores" in df.columns:
+            # Ensure cpu_cores is at least 1 for computation (0 = idle)
+            cores = df["cpu_cores"].clip(lower=1)
+            df_eng["cpu_cores"] = df["cpu_cores"]
+
+            # Heat flux density: power per active core (W/core)
+            # Higher density = harder to cool
+            if "P_cpu" in df.columns:
+                df_eng["heat_flux_density"] = df["P_cpu"] / cores
+
         # 1. Inverse PWM (Resistance is proportional to 1/Flow)
         # Add epsilon to prevent division by zero
         for pwm in ["pwm2", "pwm4", "pwm5", "pwm7"]:
@@ -89,9 +101,14 @@ class ThermalModel:
             delta_T = data["T_cpu"] - data["T_amb"]
             R_cpu = delta_T / data["P_cpu"]
 
-            # 2. Train Base Model (P_cpu, T_amb -> R_cpu)
-            X_base = data[["P_cpu", "T_amb"]]
+            # 2. Train Base Model (P_cpu, T_amb, heat_flux_density -> R_cpu)
+            # Include heat_flux_density if available (captures core count effect)
+            base_features = ["P_cpu", "T_amb"]
+            if "heat_flux_density" in data.columns:
+                base_features.append("heat_flux_density")
+            X_base = data[base_features]
             self.cpu_base_model.fit(X_base, R_cpu)
+            self._cpu_base_features = base_features  # Store for prediction
 
             # 3. Calculate Residuals
             R_base_pred = self.cpu_base_model.predict(X_base)
@@ -164,8 +181,9 @@ class ThermalModel:
         # --- CPU Prediction ---
         t_cpu = np.zeros(len(df))
         if hasattr(self, "cpu_base_model"):  # Check if trained
-            # 1. Base Resistance
-            X_base = df_eng[["P_cpu", "T_amb"]]
+            # 1. Base Resistance (use stored features from training)
+            base_features = getattr(self, "_cpu_base_features", ["P_cpu", "T_amb"])
+            X_base = df_eng[base_features]
             r_base = self.cpu_base_model.predict(X_base)
 
             X_fan = df_eng[self.cpu_fan_model.feature_names_in_]

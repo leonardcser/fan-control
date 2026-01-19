@@ -1,7 +1,7 @@
 """Data collection for thermal model fitting."""
 
 import csv
-import itertools
+import re
 import time
 from collections import deque
 from pathlib import Path
@@ -16,6 +16,22 @@ from ..safety import SafetyMonitor, AbortPointError
 from .models import MeasurementPoint, SafetyCheck, TestPoint
 from ..plot.plotting import generate_all_plots
 from ..utils import drop_privileges
+
+
+def _parse_cpu_cores(cpu_load_flags: str) -> int:
+    """
+    Extract core count from cpu_load_flags (e.g., '--cpu 6' -> 6).
+
+    Args:
+        cpu_load_flags: stress flags string
+
+    Returns:
+        Number of cores, or 0 if not specified (idle)
+    """
+    if not cpu_load_flags:
+        return 0
+    match = re.search(r"--cpu\s+(\d+)", cpu_load_flags)
+    return int(match.group(1)) if match else 0
 
 
 class TemperatureWindow:
@@ -129,7 +145,10 @@ class DataCollector:
         """
         Generator that yields test points for a specific load level.
 
-        Uses the configured sampling strategy to generate points on demand.
+        Uses a two-phase sampling approach:
+        1. Boundary sweep: All fans at same level, stepping down from high to low
+        2. Biased LHS: Latin Hypercube samples biased toward lower fan speeds
+
         This allows replacing skipped/aborted points to maintain target sample count.
 
         Args:
@@ -140,59 +159,104 @@ class DataCollector:
         Yields:
             TestPoint instances
         """
-        strategy = self.data_config.get("sampling_strategy", "latin_hypercube")
+        from scipy.stats import qmc
+
         device_keys = list(self.devices.keys())
         num_devices = len(device_keys)
 
-        # Collect levels for each device dynamically
+        # Collect PWM ranges for each device
         levels = [np.array(self.data_config[f"{k}_levels"]) for k in device_keys]
 
-        if strategy == "latin_hypercube":
-            # For LHS, generate samples in batches since it's designed for fixed sample sizes
-            from scipy.stats import qmc
+        # Parse cpu_cores once for this load level
+        cpu_cores = _parse_cpu_cores(cpu_load_flags)
 
-            batch_size = self.data_config.get("num_samples_per_load", 25)
-            batch_num = 0
+        # === Phase 1: Boundary Sweep ===
+        # Start with all fans at max, then sweep one fan at a time from max to min
+        # This isolates each fan's contribution to cooling
+        sweep_steps = self.data_config.get("boundary_sweep_steps", [100, 70, 50, 30, 0])
 
-            while True:
-                # Generate a new batch with a different seed for each batch
-                seed = self.sampling_seed + batch_num
-                sampler = qmc.LatinHypercube(d=num_devices, seed=seed)
-                samples = sampler.random(n=batch_size)
+        # Get min/max for each device from configured levels
+        device_ranges = {}
+        for key in device_keys:
+            lvl = self.data_config[f"{key}_levels"]
+            device_ranges[key] = {"min": min(lvl), "max": max(lvl)}
 
-                # Scale to PWM ranges
-                scaled_samples = qmc.scale(
-                    samples,
-                    l_bounds=[lvl.min() for lvl in levels],
-                    u_bounds=[lvl.max() for lvl in levels],
+        # Helper to convert percentage of range to PWM value
+        def pct_to_pwm(key: str, pct: float) -> int:
+            r = device_ranges[key]
+            value = r["min"] + (pct / 100.0) * (r["max"] - r["min"])
+            speed = int(round(value))
+            # Clamp to 0 if below min_pwm (fan would stall)
+            min_pwm = self.devices[key].get("min_pwm", 0)
+            if 0 < speed < min_pwm:
+                speed = 0
+            return speed
+
+        # Baseline: all fans at max
+        baseline_pwm = {key: device_ranges[key]["max"] for key in device_keys}
+        yield TestPoint(
+            pwm_values=baseline_pwm.copy(),
+            cpu_load_flags=cpu_load_flags,
+            gpu_load_flags=gpu_load_flags,
+            cpu_cores=cpu_cores,
+            description=description,
+        )
+
+        # Sweep each fan independently (others stay at max)
+        for sweep_key in device_keys:
+            for step_pct in sweep_steps:
+                # Skip 100% as it's already covered by baseline
+                if step_pct == 100:
+                    continue
+
+                pwm_map = baseline_pwm.copy()
+                pwm_map[sweep_key] = pct_to_pwm(sweep_key, step_pct)
+
+                yield TestPoint(
+                    pwm_values=pwm_map,
+                    cpu_load_flags=cpu_load_flags,
+                    gpu_load_flags=gpu_load_flags,
+                    cpu_cores=cpu_cores,
+                    description=description,
                 )
 
-                for sample in scaled_samples:
-                    pwm_map = {}
-                    for key, val in zip(device_keys, sample):
-                        speed = int(round(val))
-                        min_pwm = self.devices[key].get("min_pwm", 0)
-                        if 0 < speed < min_pwm:
-                            speed = 0
-                        pwm_map[key] = speed
+        # === Phase 2: Biased LHS ===
+        # Fill remaining samples with LHS biased toward lower fan speeds
+        alpha = self.data_config.get("sampling_bias_alpha", 2.0)
+        beta_param = self.data_config.get("sampling_bias_beta", 5.0)
+        batch_size = self.data_config.get("num_samples_per_load", 25)
+        batch_num = 0
 
-                    yield TestPoint(
-                        pwm_values=pwm_map,
-                        cpu_load_flags=cpu_load_flags,
-                        gpu_load_flags=gpu_load_flags,
-                        description=description,
-                    )
+        while True:
+            seed = self.sampling_seed + batch_num
+            rng = np.random.default_rng(seed=seed)
 
-                batch_num += 1
+            # Generate LHS samples in [0,1] for stratification
+            sampler = qmc.LatinHypercube(d=num_devices, scramble=True, seed=seed)
+            uniform_samples = sampler.random(n=batch_size)
 
-        elif strategy == "random":
-            # Random sampling is naturally infinite
-            rng = np.random.default_rng(seed=self.sampling_seed)
+            # Generate Beta-distributed samples for bias toward lower values
+            # Beta(2, 5) has mode at ~0.2, skewing samples toward lower fan speeds
+            biased_samples = rng.beta(alpha, beta_param, size=uniform_samples.shape)
 
-            while True:
+            # Combine LHS stratification with Beta marginals via rank matching
+            # This preserves good space coverage while biasing toward low values
+            for dim in range(num_devices):
+                uniform_ranks = np.argsort(np.argsort(uniform_samples[:, dim]))
+                sorted_biased = np.sort(biased_samples[:, dim])
+                biased_samples[:, dim] = sorted_biased[uniform_ranks]
+
+            # Scale to PWM ranges for each device
+            scaled_samples = np.zeros_like(biased_samples)
+            for i, lvl in enumerate(levels):
+                scaled_samples[:, i] = lvl.min() + biased_samples[:, i] * (
+                    lvl.max() - lvl.min()
+                )
+
+            for sample in scaled_samples:
                 pwm_map = {}
-                for key, lvl in zip(device_keys, levels):
-                    speed = int(rng.choice(lvl))
+                for key, val in zip(device_keys, sample):
+                    speed = int(round(val))
                     min_pwm = self.devices[key].get("min_pwm", 0)
                     if 0 < speed < min_pwm:
                         speed = 0
@@ -202,27 +266,11 @@ class DataCollector:
                     pwm_values=pwm_map,
                     cpu_load_flags=cpu_load_flags,
                     gpu_load_flags=gpu_load_flags,
+                    cpu_cores=cpu_cores,
                     description=description,
                 )
 
-        elif strategy == "grid":
-            # Grid sampling cycles through all combinations
-            while True:
-                for pwm_values in itertools.product(*levels):
-                    pwm_map = {}
-                    for key, val in zip(device_keys, pwm_values):
-                        speed = int(val)
-                        min_pwm = self.devices[key].get("min_pwm", 0)
-                        if 0 < speed < min_pwm:
-                            speed = 0
-                        pwm_map[key] = speed
-
-                    yield TestPoint(
-                        pwm_values=pwm_map,
-                        cpu_load_flags=cpu_load_flags,
-                        gpu_load_flags=gpu_load_flags,
-                        description=description,
-                    )
+            batch_num += 1
 
     def is_safe_test_point(
         self, point: TestPoint, current_power: Optional[tuple] = None
@@ -366,6 +414,7 @@ class DataCollector:
             T_gpu=gpu_temp_avg,
             cpu_load_flags=point.cpu_load_flags,
             gpu_load_flags=point.gpu_load_flags,
+            cpu_cores=point.cpu_cores,
             stabilization_time=actual_stabilization_time,
             equilibrated=eq_info["equilibrated"],
             equilibration_reason=eq_info.get("reason"),

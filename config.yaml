@@ -32,19 +32,20 @@ devices:
 # Data collection test matrix
 data_collection:
   # Fan/pump speed levels to test (percentage: 0-100)
-  pwm2_levels: [20, 100]
-  pwm4_levels: [0, 80]
-  pwm5_levels: [0, 100]
-  pwm7_levels: [60, 100]
+  # Denser sampling in lower range where fans matter most (diminishing returns above ~60%)
+  pwm2_levels: [20, 30, 40, 60, 100]
+  pwm4_levels: [0, 15, 30, 50, 80]
+  pwm5_levels: [0, 15, 30, 50, 100]
+  pwm7_levels: [60, 70, 80, 90, 100]
 
   # Load levels to test
   # Note: cpu_load accepts 'stress' flags (e.g. '--cpu 6')
   #       gpu_load accepts 'gpu_load.py' flags (e.g. '--load 50 --memory 30')
   #       Empty string "" means idle/off.
   load_levels:
-    # - cpu_load: ""
-    #   gpu_load: ""
-    #   description: "Idle"
+    - cpu_load: ""
+      gpu_load: ""
+      description: "Idle"
 
     # CPU focused loads (assuming 24 cores)
     - cpu_load: "--cpu 1"
@@ -94,17 +95,24 @@ data_collection:
   # Measurement parameters
   equilibration_check_interval: 1 # How often to sample temperature (seconds)
   equilibration_window: 10.0 # Window to check stability (seconds)
-  equilibration_threshold: 0.1 # Max temp change for equilibrium (°C)
-  equilibration_max_wait: 120 # Maximum wait time before timeout (seconds)
+  equilibration_threshold: 0.5 # Max temp change for equilibrium (°C) - relaxed for dynamic CPUs
+  equilibration_max_wait: 60 # Maximum wait time before timeout (seconds) - reduced since threshold is looser
   equilibration_min_wait: 10 # Minimum wait before checking (seconds)
   load_stabilization_time: 10 # Time to wait after starting load (seconds)
   measurement_duration: 5 # How long to measure after stabilization (seconds)
   sample_interval: 1 # Sampling interval during measurement (seconds)
 
-  # Smart test point selection
-  sampling_strategy: "latin_hypercube" # Options: latin_hypercube (recommended), random, grid
+  # Sampling configuration (two-phase approach)
+  # Phase 1: Boundary sweep - find where temps start rising by reducing each fan independently
+  #          Starts with all fans at max, then sweeps one fan at a time from max to min
+  # Phase 2: Biased LHS - fill in with samples biased toward lower fan speeds
   num_samples_per_load: 15 # Target number of data points per load level
+  boundary_sweep_steps: [100, 60, 20, 0] # Percentages of each fan's range (from pwmX_levels)
   sampling_seed: 42
+  # Bias parameters for LHS phase (uses Beta distribution)
+  # alpha < beta biases toward lower values (more samples in lower fan speed range)
+  sampling_bias_alpha: 2.0 # Beta distribution alpha parameter
+  sampling_bias_beta: 5.0 # Beta distribution beta parameter (higher = more bias to low end)
 
 # Hardware parameters
 hardware:

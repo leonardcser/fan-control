@@ -30,6 +30,7 @@ class MeasurementPoint:
     # Load settings (flags)
     cpu_load_flags: str  # Stress flags (e.g. "--cpu 6")
     gpu_load_flags: str  # gpu_load.py flags (e.g. "--load 50 --memory 30")
+    cpu_cores: int  # Number of CPU cores under load (parsed from cpu_load_flags)
 
     # Metadata
     stabilization_time: float  # Time waited for equilibrium (seconds)
@@ -53,6 +54,7 @@ class MeasurementPoint:
             "T_gpu": self.T_gpu,
             "cpu_load_flags": self.cpu_load_flags,
             "gpu_load_flags": self.gpu_load_flags,
+            "cpu_cores": self.cpu_cores,
             "stabilization_time": self.stabilization_time,
             "equilibrated": self.equilibrated,
             "equilibration_reason": self.equilibration_reason,
@@ -77,6 +79,7 @@ class MeasurementPoint:
                 "T_gpu",
                 "cpu_load_flags",
                 "gpu_load_flags",
+                "cpu_cores",
                 "stabilization_time",
                 "equilibrated",
                 "equilibration_reason",
@@ -92,6 +95,7 @@ class TestPoint:
     pwm_values: dict[str, int]  # 0-100 percentage
     cpu_load_flags: str  # stress flags
     gpu_load_flags: str  # gpu_load.py flags
+    cpu_cores: int = 0  # Number of CPU cores under load
     description: str = ""
 
 
