@@ -146,10 +146,13 @@ class Optimizer:
                 # logger.debug(f"Opt failed: {result.message}. C: {c_vals}")
                 pass
 
-        # Convert to integer PWM values
+        # Convert to integer PWM values, enforcing hard bounds
+        # COBYLA is a soft-constraint solver and may violate bounds when infeasible
         optimal_pwms = {}
         for i, name in enumerate(self.pwm_names):
-            optimal_pwms[name] = int(round(result.x[i]))
+            min_val, max_val = self.bounds[i]
+            clipped = np.clip(result.x[i], min_val, max_val)
+            optimal_pwms[name] = int(round(clipped))
 
         return optimal_pwms
 
