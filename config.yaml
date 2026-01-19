@@ -118,3 +118,70 @@ ambient:
 # Output
 output:
   directory: "./data"
+
+# Thermal model configuration (for fitting)
+# SIMPLIFIED MODEL based on data analysis showing minimal cooling effects
+model:
+  # Model structure - defines which devices affect which components
+  # Analysis showed thermal resistance is nearly constant (~0.39 °C/W for CPU)
+  # with only ~1°C difference across full cooling range
+  structure:
+    cpu:
+      # Simplified model: T = T_amb + P × (R_base - small_cooling_effects)
+      # R_base dominates, cooling provides minor adjustment
+      base_resistance: R_base_cpu
+      pump_effect:
+        device: pwm7
+        param: k_pump  # Small reduction in R from pump
+      fans:
+        pwm2:
+          param: k_rad_fan  # Small effect from radiator fan
+          pump_coupled: false  # Simplified - no coupling
+        pwm4:
+          param: k_intake  # Minor effect from intake fans
+        pwm5:
+          param: k_exhaust  # Minor effect from exhaust fans
+      baseline: R_min  # Minimum resistance floor
+
+    gpu:
+      # GPU shows better cooling response than CPU
+      base_resistance: R_base_gpu
+      fans:
+        pwm4:
+          param: k_gpu_intake  # Intake fans help GPU
+        pwm5:
+          param: k_gpu_exhaust  # Exhaust fans help GPU
+      baseline: R_gpu_min  # Minimum resistance floor
+
+  # Initial guesses - based on observed thermal resistance
+  # CPU: ~0.39 °C/W, GPU: ~0.30 °C/W (when loaded)
+  initial_guesses:
+    # CPU parameters
+    R_base_cpu: 0.42      # Start slightly above observed mean
+    k_pump: 0.0001        # Very small pump effect
+    k_rad_fan: 0.0001     # Very small radiator fan effect
+    k_intake: 0.00005     # Tiny intake effect on CPU
+    k_exhaust: 0.00005    # Tiny exhaust effect on CPU
+    R_min: 0.001          # Small baseline conductance
+
+    # GPU parameters - data shows nearly constant R~0.127 at 300W
+    R_base_gpu: 0.13      # Close to observed resistance
+    k_gpu_intake: 0.0001  # Minimal effect (insufficient data variation)
+    k_gpu_exhaust: 0.0001 # Minimal effect (insufficient data variation)
+    R_gpu_min: 0.0001     # Very small baseline
+
+  # Parameter bounds - realistic ranges based on data
+  bounds:
+    # CPU bounds - observed R range: 0.27-0.41
+    R_base_cpu: [0.35, 0.50]      # Base must be in realistic range
+    k_pump: [0, 0.01]             # Small effect only
+    k_rad_fan: [0, 0.01]          # Small effect only
+    k_intake: [0, 0.05]           # Allowed to be larger (observed hitting 0.01)
+    k_exhaust: [0, 0.01]          # Small effect
+    R_min: [0, 0.05]              # Small baseline
+
+    # GPU bounds - observed R~0.127 at 300W
+    R_base_gpu: [0.10, 0.20]       # Tight range around observed value
+    k_gpu_intake: [0, 0.05]        # Relaxed: data suggests ~0.003-0.004
+    k_gpu_exhaust: [0, 0.05]       # Relaxed: data suggests ~0.002
+    R_gpu_min: [0, 0.01]           # Very small baseline

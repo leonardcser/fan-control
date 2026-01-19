@@ -1,6 +1,5 @@
 """Safety monitoring and emergency shutdown."""
 
-import signal
 from typing import Dict
 
 from .hardware import HardwareController
