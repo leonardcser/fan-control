@@ -27,7 +27,7 @@ devices:
     pwm_number: 7
     name: "CPU Pump"
     description: "AIO pump (coolant circulation)"
-    min_pwm: 60
+    min_pwm: 40
 
 # Data collection test matrix
 data_collection:
@@ -36,7 +36,7 @@ data_collection:
   pwm2_levels: [20, 30, 40, 60, 100]
   pwm4_levels: [0, 15, 30, 50, 80]
   pwm5_levels: [0, 15, 30, 50, 100]
-  pwm7_levels: [60, 70, 80, 90, 100]
+  pwm7_levels: [40, 60, 80, 100]
 
   # Load levels to test
   # Note: cpu_load accepts 'stress' flags (e.g. '--cpu 6')
