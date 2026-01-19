@@ -62,7 +62,7 @@ described in PHYSICS_MODEL.md.
     fit_parser.add_argument(
         "--run",
         required=True,
-        help="Path to run directory containing data.csv",
+        help="Path to run directory containing collected CSV data",
     )
 
     args = parser.parse_args()

@@ -160,7 +160,7 @@ def collect_mode(args) -> None:
         with drop_privileges():
             run_dir.mkdir(parents=True, exist_ok=True)
 
-        filename = "data.csv"
+        filename = f"{run_name}.csv"
         output_path = run_dir / filename
 
         print(f"\nData will be saved to: {output_path}")

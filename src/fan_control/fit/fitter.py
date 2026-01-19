@@ -18,11 +18,49 @@ from .equations import (
 )
 
 
-def load_and_filter_data(
-    csv_path: Path, component: str, min_power: float = 5.0
+def load_and_merge_csvs(run_dir: Path) -> pd.DataFrame:
+    """
+    Load and merge all CSV files from a run directory.
+
+    Args:
+        run_dir: Path to run directory containing CSV files
+
+    Returns:
+        Merged DataFrame containing data from all CSV files
+
+    Raises:
+        FileNotFoundError: If no CSV files found in directory
+    """
+    csv_files = sorted(run_dir.glob("*.csv"))
+
+    if not csv_files:
+        raise FileNotFoundError(f"No CSV files found in: {run_dir}")
+
+    dfs = []
+    for csv_file in csv_files:
+        try:
+            df = pd.read_csv(csv_file)
+            dfs.append(df)
+            print(f"  Loaded: {csv_file.name} ({len(df)} rows)")
+        except Exception as e:
+            print(f"  Warning: Failed to load {csv_file.name}: {e}")
+
+    if not dfs:
+        raise ValueError(f"No valid CSV files could be loaded from: {run_dir}")
+
+    merged_df = pd.concat(dfs, ignore_index=True)
+    print(
+        f"  Total merged: {len(merged_df)} rows from {len(csv_files)} files"
+    )
+
+    return merged_df
+
+
+def _filter_data(
+    df: pd.DataFrame, component: str, min_power: float = 5.0
 ) -> pd.DataFrame:
     """
-    Load data from CSV and filter for quality measurements.
+    Filter thermal data for quality measurements.
 
     Filters applied:
     - Only equilibrated measurements (equilibrated == True)
@@ -31,17 +69,14 @@ def load_and_filter_data(
     - Convert PWM from 0-255 scale to 0-1 normalized scale
 
     Args:
-        csv_path: Path to data.csv file
+        df: DataFrame with raw measurement data
         component: 'cpu' or 'gpu'
         min_power: Minimum power threshold in watts (default 5W)
 
     Returns:
         Filtered DataFrame with normalized PWM values
     """
-    if not csv_path.exists():
-        raise FileNotFoundError(f"Data file not found: {csv_path}")
-
-    df: pd.DataFrame = pd.read_csv(csv_path)
+    df = df.copy()
 
     # Filter for equilibrated measurements
     initial_count = len(df)
@@ -207,17 +242,18 @@ def fit_component_model(
 
 
 def fit_thermal_model(
-    csv_path: Path, config: Dict
+    run_dir: Path, config: Dict
 ) -> Tuple[
     Dict[str, Dict[str, float]], Dict[str, np.ndarray], Dict[str, Dict[str, Any]]
 ]:
     """
     Main entry point for fitting thermal model parameters.
 
-    Fits both CPU and GPU models sequentially.
+    Loads and merges all CSV files from the run directory, then fits both
+    CPU and GPU models sequentially.
 
     Args:
-        csv_path: Path to data.csv file
+        run_dir: Path to run directory containing CSV files
         config: Full config dictionary (must contain 'model' section)
 
     Returns:
@@ -233,18 +269,23 @@ def fit_thermal_model(
     print("THERMAL MODEL FITTING")
     print("=" * 70)
 
+    # Load and merge all CSV files from run directory
+    print("\nLoading and merging CSV files...")
+    merged_df = load_and_merge_csvs(run_dir)
+    print()
+
     # Fit CPU model
-    print("\n" + "-" * 70)
+    print("-" * 70)
     print("FITTING CPU MODEL")
     print("-" * 70)
-    df_cpu = load_and_filter_data(csv_path, "cpu")
+    df_cpu = _filter_data(merged_df, "cpu")
     cpu_params, cpu_cov, cpu_info = fit_component_model("cpu", model_config, df_cpu)
 
     # Fit GPU model
     print("\n" + "-" * 70)
     print("FITTING GPU MODEL")
     print("-" * 70)
-    df_gpu = load_and_filter_data(csv_path, "gpu")
+    df_gpu = _filter_data(merged_df, "gpu")
     gpu_params, gpu_cov, gpu_info = fit_component_model("gpu", model_config, df_gpu)
 
     # Combine results

@@ -59,16 +59,17 @@ def fit_mode(args) -> None:
         print(f"✗ Run directory not found: {run_dir}")
         sys.exit(1)
 
-    # Check for data.csv
-    csv_path = run_dir / "data.csv"
-    if not csv_path.exists():
-        print(f"✗ Data file not found: {csv_path}")
-        print(f"  Expected data.csv in run directory: {run_dir}")
+    # Check for CSV files
+    csv_files = sorted(run_dir.glob("*.csv"))
+    if not csv_files:
+        print(f"✗ No CSV files found in run directory: {run_dir}")
         sys.exit(1)
 
     print(f"Config: {config_path}")
     print(f"Run directory: {run_dir}")
-    print(f"Data file: {csv_path}")
+    print(f"CSV files found: {len(csv_files)}")
+    for csv_file in csv_files:
+        print(f"  - {csv_file.name}")
 
     # Create output directory for fitted model
     model_dir = run_dir / "model"
@@ -78,7 +79,7 @@ def fit_mode(args) -> None:
     # Fit thermal model
     try:
         all_fitted_params, all_covariances, all_fit_info = fit_thermal_model(
-            csv_path, config
+            run_dir, config
         )
     except ValueError as e:
         print(f"\n✗ Fitting failed: {e}")
@@ -139,10 +140,12 @@ def fit_mode(args) -> None:
             return obj
 
     output_yaml_path = model_dir / "fitted_parameters.yaml"
+    csv_files = sorted(run_dir.glob("*.csv"))
     output_data = {
         "fitted_date": datetime.now().isoformat(),
         "config_source": str(config_path),
-        "data_source": str(csv_path),
+        "data_source": str(run_dir),
+        "data_files": [csv_file.name for csv_file in csv_files],
         "fitted_parameters": convert_numpy({**cpu_params, **gpu_params}),
         "validation_metrics": {
             "cpu": convert_numpy(cpu_metrics),
