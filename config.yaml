@@ -29,6 +29,43 @@ devices:
   #   description: "AIO pump (coolant circulation)"
   #   min_pwm: 40
 
+# Plot configuration
+# Specify which fans to use for specific plots and their relationships
+plot_config:
+  # Fan interaction plot
+  # Shows how two fans interact to affect CPU temperature
+  interaction_plot:
+    enabled: true
+    fan1: "pwm2"  # Primary fan (e.g., radiator fan)
+    fan2: "pwm5"  # Secondary fan (e.g., case fans)
+    component: "cpu"  # Which component this interaction affects (cpu or gpu)
+
+  # Thermal resistance plots
+  # R = (T - T_amb) / Power
+  thermal_resistance:
+    cpu:
+      x_axis: "pwm2"  # Fan to plot on x-axis
+      color_by: null  # Fan to use for color gradient (null = use power)
+    gpu:
+      x_axis: "pwm4"  # Fan to plot on x-axis
+      color_by: null  # Fan to use for color gradient (null = use power)
+
+  # 3D surface plots
+  # Temperature as function of two variables
+  surface_3d:
+    cpu:
+      x_axis: "pwm2"  # First fan
+      y_axis: "P_cpu"  # Second variable (can be another fan or P_cpu)
+    gpu:
+      x_axis: "pwm4"  # First fan
+      y_axis: "P_gpu"  # Second variable
+
+  # Cooling effectiveness plots
+  # Shows normalized temperature rise vs fan speed
+  cooling_effectiveness:
+    cpu_fans: ["pwm2"]  # Primary fans affecting CPU cooling
+    gpu_fans: ["pwm4", "pwm5"]  # Primary fans affecting GPU cooling
+
 # Data collection test matrix
 data_collection:
   # Fan/pump speed levels to test (percentage: 0-100)

@@ -170,61 +170,69 @@ def plot_temp_vs_power(df: pd.DataFrame) -> plt.Figure:
 
 
 def plot_pump_radiator_interaction(df: pd.DataFrame) -> plt.Figure:
-    """Plot the pump-radiator coupling effect on CPU temperature"""
+    """Plot fan interaction effects on component temperature"""
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
-    # Skip plot if pump (pwm7) is not in data
-    if "pwm7" not in df.columns:
-        axes[0].text(
-            0.5,
-            0.5,
-            "Pump (pwm7) not configured",
-            ha="center",
-            va="center",
-            fontsize=14,
-        )
-        axes[0].set_title("Pump-Radiator Coupling Effect", fontsize=13, fontweight="bold")
-        axes[1].text(
-            0.5,
-            0.5,
-            "Pump (pwm7) not configured",
-            ha="center",
-            va="center",
-            fontsize=14,
-        )
-        axes[1].set_title("Pump-Radiator Coupling Effect", fontsize=13, fontweight="bold")
+    # Get fan interaction configuration
+    interaction_cfg = CONFIG.get("plot_config", {}).get("interaction_plot", {})
+
+    if not interaction_cfg.get("enabled", False):
+        msg = "Fan interaction plot not enabled in config"
+        axes[0].text(0.5, 0.5, msg, ha="center", va="center", fontsize=14)
+        axes[0].set_title("Fan Interaction Effect", fontsize=13, fontweight="bold")
+        axes[1].text(0.5, 0.5, msg, ha="center", va="center", fontsize=14)
+        axes[1].set_title("Fan Interaction Effect", fontsize=13, fontweight="bold")
         plt.tight_layout()
         return fig
 
-    # CPU temp vs radiator fan, colored by pump speed
+    fan1 = interaction_cfg.get("fan1")
+    fan2 = interaction_cfg.get("fan2")
+    component = interaction_cfg.get("component", "cpu")
+    temp_col = f"T_{component}"
+
+    # Check if fans exist in data
+    if fan1 not in df.columns or fan2 not in df.columns:
+        msg = f"Fan interaction data not available\n({fan1} or {fan2} missing)"
+        axes[0].text(0.5, 0.5, msg, ha="center", va="center", fontsize=14)
+        axes[0].set_title("Fan Interaction Effect", fontsize=13, fontweight="bold")
+        axes[1].text(0.5, 0.5, msg, ha="center", va="center", fontsize=14)
+        axes[1].set_title("Fan Interaction Effect", fontsize=13, fontweight="bold")
+        plt.tight_layout()
+        return fig
+
+    # Get device names from config
+    fan1_name = CONFIG["devices"][fan1]["name"]
+    fan2_name = CONFIG["devices"][fan2]["name"]
+
+    # Plot 1: temp vs fan1, colored by fan2
     scatter1 = axes[0].scatter(
-        df["pwm2"], df["T_cpu"], c=df["pwm7"], s=100, alpha=0.6, cmap="viridis"
+        df[fan1], df[temp_col], c=df[fan2], s=100, alpha=0.6, cmap="viridis"
     )
-    axes[0].set_xlabel("Radiator Fan Speed (pwm2)", fontsize=12)
-    axes[0].set_ylabel("CPU Temperature (°C)", fontsize=12)
+    axes[0].set_xlabel(f"{fan1_name} ({fan1})", fontsize=12)
+    axes[0].set_ylabel(f"{component.upper()} Temperature (°C)", fontsize=12)
     axes[0].set_title(
-        "Pump-Radiator Coupling Effect\nCPU Temp vs Radiator Fan (color = pump speed)",
+        f"Fan Interaction Effect\n{component.upper()} Temp vs {fan1_name} (color = {fan2_name})",
         fontsize=13,
         fontweight="bold",
     )
     axes[0].grid(True, alpha=0.3)
     cbar1 = plt.colorbar(scatter1, ax=axes[0])
-    cbar1.set_label("Pump Speed (pwm7)", fontsize=10)
+    cbar1.set_label(f"{fan2_name} ({fan2})", fontsize=10)
 
-    # CPU temp vs pump speed, colored by radiator fan
+    # Plot 2: temp vs fan2, colored by fan1
     scatter2 = axes[1].scatter(
-        df["pwm7"], df["T_cpu"], c=df["pwm2"], s=100, alpha=0.6, cmap="plasma"
+        df[fan2], df[temp_col], c=df[fan1], s=100, alpha=0.6, cmap="plasma"
     )
-    axes[1].set_xlabel("Pump Speed (pwm7)", fontsize=12)
-    axes[1].set_ylabel("CPU Temperature (°C)", fontsize=12)
+    axes[1].set_xlabel(f"{fan2_name} ({fan2})", fontsize=12)
+    axes[1].set_ylabel(f"{component.upper()} Temperature (°C)", fontsize=12)
     axes[1].set_title(
-        "Pump-Radiator Coupling Effect\nCPU Temp vs Pump Speed (color = radiator fan)",
+        f"Fan Interaction Effect\n{component.upper()} Temp vs {fan2_name} (color = {fan1_name})",
         fontsize=13,
         fontweight="bold",
     )
     axes[1].grid(True, alpha=0.3)
     cbar2 = plt.colorbar(scatter2, ax=axes[1])
-    cbar2.set_label("Radiator Fan Speed (pwm2)", fontsize=10)
+    cbar2.set_label(f"{fan1_name} ({fan1})", fontsize=10)
 
     plt.tight_layout()
     return fig
@@ -234,52 +242,110 @@ def plot_thermal_resistance(df: pd.DataFrame) -> plt.Figure:
     """Plot effective thermal resistance: (T - T_amb) / Power"""
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
+    # Get plot config
+    resistance_cfg = CONFIG.get("plot_config", {}).get("thermal_resistance", {})
+    cpu_cfg = resistance_cfg.get("cpu", {"x_axis": "pwm2", "color_by": None})
+
     # CPU thermal resistance
     df_cpu = df[df["P_cpu"] > 0].copy()
     df_cpu["R_cpu"] = (df_cpu["T_cpu"] - df_cpu["T_amb"]) / df_cpu["P_cpu"]
 
-    scatter1 = axes[0].scatter(
-        df_cpu["pwm2"],
-        df_cpu["R_cpu"],
-        c=df_cpu["pwm7"],
-        s=100,
-        alpha=0.6,
-        cmap="coolwarm",
-    )
-    axes[0].set_xlabel("Radiator Fan Speed (pwm2)", fontsize=12)
-    axes[0].set_ylabel("CPU Thermal Resistance (°C/W)", fontsize=12)
-    axes[0].set_title(
-        "CPU Thermal Resistance vs Radiator Fan\n(color = pump speed)",
-        fontsize=13,
-        fontweight="bold",
-    )
-    axes[0].grid(True, alpha=0.3)
-    cbar1 = plt.colorbar(scatter1, ax=axes[0])
-    cbar1.set_label("Pump Speed (pwm7)", fontsize=10)
+    x_axis = cpu_cfg.get("x_axis", "pwm2")
+    color_by = cpu_cfg.get("color_by")
 
-    # GPU thermal resistance
-    df_gpu = df[df["P_gpu"] > 0].copy()
-    if len(df_gpu) > 0:
-        df_gpu["R_gpu"] = (df_gpu["T_gpu"] - df_gpu["T_amb"]) / df_gpu["P_gpu"]
+    if x_axis in df_cpu.columns:
+        x_name = CONFIG["devices"][x_axis]["name"]
 
-        scatter2 = axes[1].scatter(
-            df_gpu["pwm4"],
-            df_gpu["R_gpu"],
-            c=df_gpu["pwm5"],
+        if color_by and color_by in df_cpu.columns:
+            color_data = df_cpu[color_by]
+            color_name = CONFIG["devices"][color_by]["name"]
+            title_suffix = f"(color = {color_name})"
+            cbar_label = f"{color_name} ({color_by})"
+        else:
+            color_data = df_cpu["P_cpu"]
+            title_suffix = "(color = CPU power)"
+            cbar_label = "CPU Power (W)"
+
+        scatter1 = axes[0].scatter(
+            df_cpu[x_axis],
+            df_cpu["R_cpu"],
+            c=color_data,
             s=100,
             alpha=0.6,
             cmap="coolwarm",
         )
-        axes[1].set_xlabel("Bottom Intake Speed (pwm4)", fontsize=12)
-        axes[1].set_ylabel("GPU Thermal Resistance (°C/W)", fontsize=12)
-        axes[1].set_title(
-            "GPU Thermal Resistance vs Bottom Intake\n(color = front/rear fan speed)",
+        axes[0].set_xlabel(f"{x_name} ({x_axis})", fontsize=12)
+        axes[0].set_ylabel("CPU Thermal Resistance (°C/W)", fontsize=12)
+        axes[0].set_title(
+            f"CPU Thermal Resistance vs {x_name}\n{title_suffix}",
             fontsize=13,
             fontweight="bold",
         )
-        axes[1].grid(True, alpha=0.3)
-        cbar2 = plt.colorbar(scatter2, ax=axes[1])
-        cbar2.set_label("Front/Rear Fan Speed (pwm5)", fontsize=10)
+        axes[0].grid(True, alpha=0.3)
+        cbar1 = plt.colorbar(scatter1, ax=axes[0])
+        cbar1.set_label(cbar_label, fontsize=10)
+    else:
+        axes[0].text(
+            0.5,
+            0.5,
+            f"Fan {x_axis} not available",
+            ha="center",
+            va="center",
+            fontsize=12,
+        )
+        axes[0].set_title("CPU Thermal Resistance", fontsize=13, fontweight="bold")
+
+    # GPU thermal resistance
+    gpu_cfg = resistance_cfg.get("gpu", {"x_axis": "pwm4", "color_by": None})
+    df_gpu = df[df["P_gpu"] > 0].copy()
+
+    if len(df_gpu) > 0:
+        df_gpu["R_gpu"] = (df_gpu["T_gpu"] - df_gpu["T_amb"]) / df_gpu["P_gpu"]
+
+        x_axis_gpu = gpu_cfg.get("x_axis", "pwm4")
+        color_by_gpu = gpu_cfg.get("color_by")
+
+        if x_axis_gpu in df_gpu.columns:
+            x_name_gpu = CONFIG["devices"][x_axis_gpu]["name"]
+
+            if color_by_gpu and color_by_gpu in df_gpu.columns:
+                color_data_gpu = df_gpu[color_by_gpu]
+                color_name_gpu = CONFIG["devices"][color_by_gpu]["name"]
+                title_suffix_gpu = f"(color = {color_name_gpu})"
+                cbar_label_gpu = f"{color_name_gpu} ({color_by_gpu})"
+            else:
+                color_data_gpu = df_gpu["P_gpu"]
+                title_suffix_gpu = "(color = GPU power)"
+                cbar_label_gpu = "GPU Power (W)"
+
+            scatter2 = axes[1].scatter(
+                df_gpu[x_axis_gpu],
+                df_gpu["R_gpu"],
+                c=color_data_gpu,
+                s=100,
+                alpha=0.6,
+                cmap="coolwarm",
+            )
+            axes[1].set_xlabel(f"{x_name_gpu} ({x_axis_gpu})", fontsize=12)
+            axes[1].set_ylabel("GPU Thermal Resistance (°C/W)", fontsize=12)
+            axes[1].set_title(
+                f"GPU Thermal Resistance vs {x_name_gpu}\n{title_suffix_gpu}",
+                fontsize=13,
+                fontweight="bold",
+            )
+            axes[1].grid(True, alpha=0.3)
+            cbar2 = plt.colorbar(scatter2, ax=axes[1])
+            cbar2.set_label(cbar_label_gpu, fontsize=10)
+        else:
+            axes[1].text(
+                0.5,
+                0.5,
+                f"Fan {x_axis_gpu} not available",
+                ha="center",
+                va="center",
+                fontsize=12,
+            )
+            axes[1].set_title("GPU Thermal Resistance", fontsize=13, fontweight="bold")
     else:
         axes[1].text(
             0.5,
@@ -324,50 +390,76 @@ def plot_cooling_effectiveness(df: pd.DataFrame) -> plt.Figure:
     df_work["T_cpu_norm"] = df_work["T_cpu"] - df_work["T_amb"]
     df_work["T_gpu_norm"] = df_work["T_gpu"] - df_work["T_amb"]
 
-    # CPU cooling effectiveness vs radiator fan (pwm2)
-    df_sorted = df_work.sort_values("pwm2")
-    axes[0, 0].scatter(
-        df_sorted["pwm2"],
-        df_sorted["T_cpu_norm"],
-        c=df_sorted["P_cpu"],
-        s=60,
-        alpha=0.6,
-        cmap="viridis",
-    )
-    axes[0, 0].set_xlabel("Radiator Fan Speed (pwm2)", fontsize=12)
-    axes[0, 0].set_ylabel("CPU ΔT above Ambient (°C)", fontsize=12)
-    axes[0, 0].set_title(
-        "CPU Cooling Effectiveness: Radiator Fan\n(Diminishing returns at high speeds)",
-        fontsize=13,
-        fontweight="bold",
-    )
-    axes[0, 0].grid(True, alpha=0.3)
-    cbar = plt.colorbar(
-        plt.cm.ScalarMappable(
-            cmap="viridis",
-            norm=plt.Normalize(
-                vmin=df_work["P_cpu"].min(), vmax=df_work["P_cpu"].max()
-            ),
-        ),
-        ax=axes[0, 0],
-    )
-    cbar.set_label("CPU Power (W)", fontsize=10)
+    # Get cooling effectiveness config
+    effectiveness_cfg = CONFIG.get("plot_config", {}).get("cooling_effectiveness", {})
+    cpu_fans = effectiveness_cfg.get("cpu_fans", ["pwm2"])
+    gpu_fans = effectiveness_cfg.get("gpu_fans", ["pwm4", "pwm5"])
 
-    # CPU cooling effectiveness vs pump (pwm7) - skip if not present
-    if "pwm7" in df_work.columns:
-        df_sorted = df_work.sort_values("pwm7")
-        axes[0, 1].scatter(
-            df_sorted["pwm7"],
+    # CPU cooling effectiveness - plot first fan
+    if len(cpu_fans) > 0 and cpu_fans[0] in df_work.columns:
+        cpu_fan = cpu_fans[0]
+        cpu_fan_name = CONFIG["devices"][cpu_fan]["name"]
+
+        df_sorted = df_work.sort_values(cpu_fan)
+        axes[0, 0].scatter(
+            df_sorted[cpu_fan],
             df_sorted["T_cpu_norm"],
-            c=df_sorted["pwm2"],
+            c=df_sorted["P_cpu"],
+            s=60,
+            alpha=0.6,
+            cmap="viridis",
+        )
+        axes[0, 0].set_xlabel(f"{cpu_fan_name} ({cpu_fan})", fontsize=12)
+        axes[0, 0].set_ylabel("CPU ΔT above Ambient (°C)", fontsize=12)
+        axes[0, 0].set_title(
+            f"CPU Cooling Effectiveness: {cpu_fan_name}\n(Diminishing returns at high speeds)",
+            fontsize=13,
+            fontweight="bold",
+        )
+        axes[0, 0].grid(True, alpha=0.3)
+        cbar = plt.colorbar(
+            plt.cm.ScalarMappable(
+                cmap="viridis",
+                norm=plt.Normalize(
+                    vmin=df_work["P_cpu"].min(), vmax=df_work["P_cpu"].max()
+                ),
+            ),
+            ax=axes[0, 0],
+        )
+        cbar.set_label("CPU Power (W)", fontsize=10)
+    else:
+        axes[0, 0].text(
+            0.5,
+            0.5,
+            "CPU fan data not available",
+            ha="center",
+            va="center",
+            fontsize=12,
+        )
+        axes[0, 0].set_title(
+            "CPU Cooling Effectiveness", fontsize=13, fontweight="bold"
+        )
+
+    # CPU cooling effectiveness - plot second fan if available
+    if len(cpu_fans) > 1 and cpu_fans[1] in df_work.columns:
+        cpu_fan2 = cpu_fans[1]
+        cpu_fan2_name = CONFIG["devices"][cpu_fan2]["name"]
+
+        df_sorted = df_work.sort_values(cpu_fan2)
+        axes[0, 1].scatter(
+            df_sorted[cpu_fan2],
+            df_sorted["T_cpu_norm"],
+            c=df_sorted[cpu_fans[0]],
             s=60,
             alpha=0.6,
             cmap="plasma",
         )
-        axes[0, 1].set_xlabel("Pump Speed (pwm7)", fontsize=12)
+        axes[0, 1].set_xlabel(f"{cpu_fan2_name} ({cpu_fan2})", fontsize=12)
+        cpu_fan1_name = CONFIG["devices"][cpu_fans[0]]["name"]
+
         axes[0, 1].set_ylabel("CPU ΔT above Ambient (°C)", fontsize=12)
         axes[0, 1].set_title(
-            "CPU Cooling Effectiveness: Pump Speed\n(color = radiator fan speed)",
+            f"CPU Cooling Effectiveness: {cpu_fan2_name}\n(color = {cpu_fan1_name})",
             fontsize=13,
             fontweight="bold",
         )
@@ -375,72 +467,117 @@ def plot_cooling_effectiveness(df: pd.DataFrame) -> plt.Figure:
         cbar = plt.colorbar(
             plt.cm.ScalarMappable(
                 cmap="plasma",
-                norm=plt.Normalize(vmin=df_work["pwm2"].min(), vmax=df_work["pwm2"].max()),
+                norm=plt.Normalize(
+                    vmin=df_work[cpu_fans[0]].min(), vmax=df_work[cpu_fans[0]].max()
+                ),
             ),
             ax=axes[0, 1],
         )
-        cbar.set_label("Radiator Fan PWM", fontsize=10)
+        cbar.set_label(f"{cpu_fan1_name} ({cpu_fans[0]})", fontsize=10)
     else:
         axes[0, 1].text(
-            0.5, 0.5, "Pump (pwm7) not configured", ha="center", va="center", fontsize=12
+            0.5,
+            0.5,
+            "Second CPU fan not configured",
+            ha="center",
+            va="center",
+            fontsize=12,
         )
-        axes[0, 1].set_title("CPU Cooling Effectiveness: Pump Speed", fontsize=13, fontweight="bold")
+        axes[0, 1].set_title(
+            "CPU Cooling Effectiveness", fontsize=13, fontweight="bold"
+        )
 
-    # GPU cooling effectiveness vs bottom intake (pwm4)
-    df_sorted = df_work.sort_values("pwm4")
-    axes[1, 0].scatter(
-        df_sorted["pwm4"],
-        df_sorted["T_gpu_norm"],
-        c=df_sorted["P_gpu"],
-        s=60,
-        alpha=0.6,
-        cmap="viridis",
-    )
-    axes[1, 0].set_xlabel("Bottom Intake Speed (pwm4)", fontsize=12)
-    axes[1, 0].set_ylabel("GPU ΔT above Ambient (°C)", fontsize=12)
-    axes[1, 0].set_title(
-        "GPU Cooling Effectiveness: Bottom Intake\n(Direct airflow to GPU)",
-        fontsize=13,
-        fontweight="bold",
-    )
-    axes[1, 0].grid(True, alpha=0.3)
-    cbar = plt.colorbar(
-        plt.cm.ScalarMappable(
+    # GPU cooling effectiveness - plot first fan
+    if len(gpu_fans) > 0 and gpu_fans[0] in df_work.columns:
+        gpu_fan = gpu_fans[0]
+        gpu_fan_name = CONFIG["devices"][gpu_fan]["name"]
+
+        df_sorted = df_work.sort_values(gpu_fan)
+        axes[1, 0].scatter(
+            df_sorted[gpu_fan],
+            df_sorted["T_gpu_norm"],
+            c=df_sorted["P_gpu"],
+            s=60,
+            alpha=0.6,
             cmap="viridis",
-            norm=plt.Normalize(
-                vmin=df_work["P_gpu"].min(), vmax=df_work["P_gpu"].max()
+        )
+        axes[1, 0].set_xlabel(f"{gpu_fan_name} ({gpu_fan})", fontsize=12)
+        axes[1, 0].set_ylabel("GPU ΔT above Ambient (°C)", fontsize=12)
+        axes[1, 0].set_title(
+            f"GPU Cooling Effectiveness: {gpu_fan_name}\n(Direct airflow to GPU)",
+            fontsize=13,
+            fontweight="bold",
+        )
+        axes[1, 0].grid(True, alpha=0.3)
+        cbar = plt.colorbar(
+            plt.cm.ScalarMappable(
+                cmap="viridis",
+                norm=plt.Normalize(
+                    vmin=df_work["P_gpu"].min(), vmax=df_work["P_gpu"].max()
+                ),
             ),
-        ),
-        ax=axes[1, 0],
-    )
-    cbar.set_label("GPU Power (W)", fontsize=10)
+            ax=axes[1, 0],
+        )
+        cbar.set_label("GPU Power (W)", fontsize=10)
+    else:
+        axes[1, 0].text(
+            0.5,
+            0.5,
+            "GPU fan data not available",
+            ha="center",
+            va="center",
+            fontsize=12,
+        )
+        axes[1, 0].set_title(
+            "GPU Cooling Effectiveness", fontsize=13, fontweight="bold"
+        )
 
-    # GPU cooling effectiveness vs front/rear fans (pwm5)
-    df_sorted = df_work.sort_values("pwm5")
-    axes[1, 1].scatter(
-        df_sorted["pwm5"],
-        df_sorted["T_gpu_norm"],
-        c=df_sorted["pwm4"],
-        s=60,
-        alpha=0.6,
-        cmap="plasma",
-    )
-    axes[1, 1].set_xlabel("Front/Rear Fan Speed (pwm5)", fontsize=12)
-    axes[1, 1].set_ylabel("GPU ΔT above Ambient (°C)", fontsize=12)
-    axes[1, 1].set_title(
-        "GPU Cooling Effectiveness: Front/Rear Fans\n(color = bottom intake speed)",
-        fontsize=13,
-        fontweight="bold",
-    )
-    axes[1, 1].grid(True, alpha=0.3)
-    cbar = plt.colorbar(
-        plt.cm.ScalarMappable(
+    # GPU cooling effectiveness - plot second fan if available
+    if len(gpu_fans) > 1 and gpu_fans[1] in df_work.columns:
+        gpu_fan2 = gpu_fans[1]
+        gpu_fan2_name = CONFIG["devices"][gpu_fan2]["name"]
+
+        df_sorted = df_work.sort_values(gpu_fan2)
+        axes[1, 1].scatter(
+            df_sorted[gpu_fan2],
+            df_sorted["T_gpu_norm"],
+            c=df_sorted[gpu_fans[0]],
+            s=60,
+            alpha=0.6,
             cmap="plasma",
-            norm=plt.Normalize(vmin=df_work["pwm4"].min(), vmax=df_work["pwm4"].max()),
-        ),
-        ax=axes[1, 1],
-    )
-    cbar.set_label("Bottom Intake PWM", fontsize=10)
+        )
+        gpu_fan1_name = CONFIG["devices"][gpu_fans[0]]["name"]
+
+        axes[1, 1].set_xlabel(f"{gpu_fan2_name} ({gpu_fan2})", fontsize=12)
+        axes[1, 1].set_ylabel("GPU ΔT above Ambient (°C)", fontsize=12)
+        axes[1, 1].set_title(
+            f"GPU Cooling Effectiveness: {gpu_fan2_name}\n(color = {gpu_fan1_name})",
+            fontsize=13,
+            fontweight="bold",
+        )
+        axes[1, 1].grid(True, alpha=0.3)
+        cbar = plt.colorbar(
+            plt.cm.ScalarMappable(
+                cmap="plasma",
+                norm=plt.Normalize(
+                    vmin=df_work[gpu_fans[0]].min(), vmax=df_work[gpu_fans[0]].max()
+                ),
+            ),
+            ax=axes[1, 1],
+        )
+        cbar.set_label(f"{gpu_fan1_name} ({gpu_fans[0]})", fontsize=10)
+    else:
+        axes[1, 1].text(
+            0.5,
+            0.5,
+            "Second GPU fan not configured",
+            ha="center",
+            va="center",
+            fontsize=12,
+        )
+        axes[1, 1].set_title(
+            "GPU Cooling Effectiveness", fontsize=13, fontweight="bold"
+        )
 
     plt.tight_layout()
     return fig
@@ -524,7 +661,9 @@ def plot_ambient_normalized(df: pd.DataFrame) -> plt.Figure:
             cbar = plt.colorbar(
                 plt.cm.ScalarMappable(
                     cmap="viridis",
-                    norm=plt.Normalize(vmin=df_cpu["pwm7"].min(), vmax=df_cpu["pwm7"].max()),
+                    norm=plt.Normalize(
+                        vmin=df_cpu["pwm7"].min(), vmax=df_cpu["pwm7"].max()
+                    ),
                 ),
                 ax=axes[1, 0],
             )
@@ -542,7 +681,9 @@ def plot_ambient_normalized(df: pd.DataFrame) -> plt.Figure:
             cbar = plt.colorbar(
                 plt.cm.ScalarMappable(
                     cmap="viridis",
-                    norm=plt.Normalize(vmin=df_cpu["P_cpu"].min(), vmax=df_cpu["P_cpu"].max()),
+                    norm=plt.Normalize(
+                        vmin=df_cpu["P_cpu"].min(), vmax=df_cpu["P_cpu"].max()
+                    ),
                 ),
                 ax=axes[1, 0],
             )
@@ -559,7 +700,12 @@ def plot_ambient_normalized(df: pd.DataFrame) -> plt.Figure:
         axes[1, 0].grid(True, alpha=0.3)
     else:
         axes[1, 0].text(
-            0.5, 0.5, "Insufficient CPU load data", ha="center", va="center", fontsize=12
+            0.5,
+            0.5,
+            "Insufficient CPU load data",
+            ha="center",
+            va="center",
+            fontsize=12,
         )
 
     # GPU: Thermal resistance
@@ -613,110 +759,208 @@ def plot_3d_surfaces(df: pd.DataFrame) -> plt.Figure:
 
     fig = plt.figure(figsize=(18, 12))
 
-    # CPU: T_cpu as f(pwm2, pwm7) - Pump-Radiator interaction
+    # Get surface plot config
+    surface_cfg = CONFIG.get("plot_config", {}).get("surface_3d", {})
+    cpu_cfg = surface_cfg.get("cpu", {"x_axis": "pwm2", "y_axis": "P_cpu"})
+
+    # CPU surface plot
     ax1 = fig.add_subplot(2, 2, 1, projection="3d")
 
-    # Skip pump-radiator plot if pump not configured
-    if "pwm7" not in df.columns:
-        ax1.text2D(0.5, 0.5, "Pump (pwm7) not configured", ha="center", va="center", fontsize=12)
-        ax1.set_title("CPU Temperature Surface\nf(pwm2, pwm7)", fontsize=12, fontweight="bold")
+    x_var = cpu_cfg.get("x_axis", "pwm2")
+    y_var = cpu_cfg.get("y_axis", "P_cpu")
+
+    if x_var not in df.columns or y_var not in df.columns:
+        ax1.text2D(
+            0.5,
+            0.5,
+            f"Variables {x_var} or {y_var} not available",
+            ha="center",
+            va="center",
+            fontsize=12,
+        )
+        ax1.set_title(
+            f"CPU Temperature Surface\nf({x_var}, {y_var})",
+            fontsize=12,
+            fontweight="bold",
+        )
     else:
+        # Get variable labels
+        x_label = (
+            CONFIG["devices"][x_var]["name"] if x_var in CONFIG["devices"] else x_var
+        )
+        y_label = (
+            CONFIG["devices"][y_var]["name"] if y_var in CONFIG["devices"] else y_var
+        )
+
         # Create grid for interpolation
-        pwm2_grid = np.linspace(df["pwm2"].min(), df["pwm2"].max(), 30)
-        pwm7_grid = np.linspace(df["pwm7"].min(), df["pwm7"].max(), 30)
-        pwm2_mesh, pwm7_mesh = np.meshgrid(pwm2_grid, pwm7_grid)
+        x_grid = np.linspace(df[x_var].min(), df[x_var].max(), 30)
+        y_grid = np.linspace(df[y_var].min(), df[y_var].max(), 30)
+        x_mesh, y_mesh = np.meshgrid(x_grid, y_grid)
 
         # Interpolate CPU temperature
-        points = df[["pwm2", "pwm7"]].values
+        points = df[[x_var, y_var]].values
         values = df["T_cpu"].values
-        T_cpu_interp = griddata(points, values, (pwm2_mesh, pwm7_mesh), method="cubic")
+        T_cpu_interp = griddata(points, values, (x_mesh, y_mesh), method="cubic")
 
         surf1 = ax1.plot_surface(
-            pwm2_mesh, pwm7_mesh, T_cpu_interp, cmap="viridis", alpha=0.8, edgecolor="none"
+            x_mesh, y_mesh, T_cpu_interp, cmap="viridis", alpha=0.8, edgecolor="none"
         )
-        ax1.scatter(df["pwm2"], df["pwm7"], df["T_cpu"], c="red", s=10, alpha=0.5)
-        ax1.set_xlabel("Radiator Fan (pwm2)", fontsize=10)
-        ax1.set_ylabel("Pump Speed (pwm7)", fontsize=10)
+        ax1.scatter(df[x_var], df[y_var], df["T_cpu"], c="red", s=10, alpha=0.5)
+        ax1.set_xlabel(f"{x_label} ({x_var})", fontsize=10)
+        ax1.set_ylabel(f"{y_label} ({y_var})", fontsize=10)
         ax1.set_zlabel("CPU Temp (°C)", fontsize=10)
         ax1.set_title(
-            "CPU Temperature Surface\nf(pwm2, pwm7)", fontsize=12, fontweight="bold"
+            f"CPU Temperature Surface\nf({x_var}, {y_var})",
+            fontsize=12,
+            fontweight="bold",
         )
         fig.colorbar(surf1, ax=ax1, shrink=0.5)
 
-    # CPU: T_cpu as f(pwm2, P_cpu) - Power dependency
+    # CPU: T_cpu as f(pwm, P_cpu) - Alternative view (power dependency)
     ax2 = fig.add_subplot(2, 2, 2, projection="3d")
 
-    P_cpu_grid = np.linspace(df["P_cpu"].min(), df["P_cpu"].max(), 30)
-    pwm2_grid2 = np.linspace(df["pwm2"].min(), df["pwm2"].max(), 30)
-    P_cpu_mesh, pwm2_mesh2 = np.meshgrid(P_cpu_grid, pwm2_grid2)
+    # Use first available fan for this plot
+    fan_for_power_plot = next(
+        (k for k in CONFIG["devices"].keys() if k in df.columns), "pwm2"
+    )
 
-    points2 = df[["P_cpu", "pwm2"]].values
-    T_cpu_interp2 = griddata(points2, values, (P_cpu_mesh, pwm2_mesh2), method="cubic")
+    P_cpu_grid = np.linspace(df["P_cpu"].min(), df["P_cpu"].max(), 30)
+    fan_grid = np.linspace(
+        df[fan_for_power_plot].min(), df[fan_for_power_plot].max(), 30
+    )
+    P_cpu_mesh, fan_mesh = np.meshgrid(P_cpu_grid, fan_grid)
+
+    fan_name = CONFIG["devices"][fan_for_power_plot]["name"]
+
+    points2 = df[["P_cpu", fan_for_power_plot]].values
+    values2 = df["T_cpu"].values
+    T_cpu_interp2 = griddata(points2, values2, (P_cpu_mesh, fan_mesh), method="cubic")
 
     surf2 = ax2.plot_surface(
         P_cpu_mesh,
-        pwm2_mesh2,
+        fan_mesh,
         T_cpu_interp2,
         cmap="plasma",
         alpha=0.8,
         edgecolor="none",
     )
-    ax2.scatter(df["P_cpu"], df["pwm2"], df["T_cpu"], c="red", s=10, alpha=0.5)
+    ax2.scatter(
+        df["P_cpu"], df[fan_for_power_plot], df["T_cpu"], c="red", s=10, alpha=0.5
+    )
     ax2.set_xlabel("CPU Power (W)", fontsize=10)
-    ax2.set_ylabel("Radiator Fan (pwm2)", fontsize=10)
+    ax2.set_ylabel(f"{fan_name} ({fan_for_power_plot})", fontsize=10)
     ax2.set_zlabel("CPU Temp (°C)", fontsize=10)
     ax2.set_title(
-        "CPU Temperature Surface\nf(P_cpu, pwm2)", fontsize=12, fontweight="bold"
+        f"CPU Temperature Surface\nf(P_cpu, {fan_for_power_plot})",
+        fontsize=12,
+        fontweight="bold",
     )
     fig.colorbar(surf2, ax=ax2, shrink=0.5)
 
-    # GPU: T_gpu as f(pwm4, pwm5) - Fan interaction
+    # GPU surface plot
+    gpu_cfg = surface_cfg.get("gpu", {"x_axis": "pwm4", "y_axis": "P_gpu"})
     ax3 = fig.add_subplot(2, 2, 3, projection="3d")
 
-    pwm4_grid = np.linspace(df["pwm4"].min(), df["pwm4"].max(), 30)
-    pwm5_grid = np.linspace(df["pwm5"].min(), df["pwm5"].max(), 30)
-    pwm4_mesh, pwm5_mesh = np.meshgrid(pwm4_grid, pwm5_grid)
+    x_var_gpu = gpu_cfg.get("x_axis", "pwm4")
+    y_var_gpu = gpu_cfg.get("y_axis", "P_gpu")
 
-    points3 = df[["pwm4", "pwm5"]].values
-    values3 = df["T_gpu"].values
-    T_gpu_interp = griddata(points3, values3, (pwm4_mesh, pwm5_mesh), method="cubic")
+    if x_var_gpu not in df.columns or y_var_gpu not in df.columns:
+        ax3.text2D(
+            0.5,
+            0.5,
+            f"Variables {x_var_gpu} or {y_var_gpu} not available",
+            ha="center",
+            va="center",
+            fontsize=12,
+        )
+        ax3.set_title(
+            f"GPU Temperature Surface\nf({x_var_gpu}, {y_var_gpu})",
+            fontsize=12,
+            fontweight="bold",
+        )
+    else:
+        # Get variable labels
+        x_label_gpu = (
+            CONFIG["devices"][x_var_gpu]["name"]
+            if x_var_gpu in CONFIG["devices"]
+            else x_var_gpu
+        )
+        y_label_gpu = (
+            CONFIG["devices"][y_var_gpu]["name"]
+            if y_var_gpu in CONFIG["devices"]
+            else y_var_gpu
+        )
 
-    surf3 = ax3.plot_surface(
-        pwm4_mesh, pwm5_mesh, T_gpu_interp, cmap="viridis", alpha=0.8, edgecolor="none"
-    )
-    ax3.scatter(df["pwm4"], df["pwm5"], df["T_gpu"], c="red", s=10, alpha=0.5)
-    ax3.set_xlabel("Bottom Intake (pwm4)", fontsize=10)
-    ax3.set_ylabel("Front/Rear Fans (pwm5)", fontsize=10)
-    ax3.set_zlabel("GPU Temp (°C)", fontsize=10)
-    ax3.set_title(
-        "GPU Temperature Surface\nf(pwm4, pwm5)", fontsize=12, fontweight="bold"
-    )
-    fig.colorbar(surf3, ax=ax3, shrink=0.5)
+        # Create grid for interpolation
+        x_grid_gpu = np.linspace(df[x_var_gpu].min(), df[x_var_gpu].max(), 30)
+        y_grid_gpu = np.linspace(df[y_var_gpu].min(), df[y_var_gpu].max(), 30)
+        x_mesh_gpu, y_mesh_gpu = np.meshgrid(x_grid_gpu, y_grid_gpu)
 
-    # GPU: T_gpu as f(pwm4, P_gpu) - Power dependency
+        # Interpolate GPU temperature
+        points3 = df[[x_var_gpu, y_var_gpu]].values
+        values3 = df["T_gpu"].values
+        T_gpu_interp = griddata(
+            points3, values3, (x_mesh_gpu, y_mesh_gpu), method="cubic"
+        )
+
+        surf3 = ax3.plot_surface(
+            x_mesh_gpu,
+            y_mesh_gpu,
+            T_gpu_interp,
+            cmap="viridis",
+            alpha=0.8,
+            edgecolor="none",
+        )
+        ax3.scatter(df[x_var_gpu], df[y_var_gpu], df["T_gpu"], c="red", s=10, alpha=0.5)
+        ax3.set_xlabel(f"{x_label_gpu} ({x_var_gpu})", fontsize=10)
+        ax3.set_ylabel(f"{y_label_gpu} ({y_var_gpu})", fontsize=10)
+        ax3.set_zlabel("GPU Temp (°C)", fontsize=10)
+        ax3.set_title(
+            f"GPU Temperature Surface\nf({x_var_gpu}, {y_var_gpu})",
+            fontsize=12,
+            fontweight="bold",
+        )
+        fig.colorbar(surf3, ax=ax3, shrink=0.5)
+
+    # GPU: T_gpu as f(pwm, P_gpu) - Alternative view (power dependency)
     ax4 = fig.add_subplot(2, 2, 4, projection="3d")
 
-    P_gpu_grid = np.linspace(df["P_gpu"].min(), df["P_gpu"].max(), 30)
-    pwm4_grid2 = np.linspace(df["pwm4"].min(), df["pwm4"].max(), 30)
-    P_gpu_mesh, pwm4_mesh2 = np.meshgrid(P_gpu_grid, pwm4_grid2)
+    # Use first available fan for GPU power plot
+    fan_for_gpu_power_plot = next(
+        (k for k in CONFIG["devices"].keys() if k in df.columns), "pwm4"
+    )
 
-    points4 = df[["P_gpu", "pwm4"]].values
-    T_gpu_interp2 = griddata(points4, values3, (P_gpu_mesh, pwm4_mesh2), method="cubic")
+    P_gpu_grid = np.linspace(df["P_gpu"].min(), df["P_gpu"].max(), 30)
+    fan_gpu_grid = np.linspace(
+        df[fan_for_gpu_power_plot].min(), df[fan_for_gpu_power_plot].max(), 30
+    )
+    P_gpu_mesh, fan_gpu_mesh = np.meshgrid(P_gpu_grid, fan_gpu_grid)
+
+    points4 = df[["P_gpu", fan_for_gpu_power_plot]].values
+    T_gpu_interp2 = griddata(
+        points4, values3, (P_gpu_mesh, fan_gpu_mesh), method="cubic"
+    )
+
+    fan_gpu_name = CONFIG["devices"][fan_for_gpu_power_plot]["name"]
 
     surf4 = ax4.plot_surface(
         P_gpu_mesh,
-        pwm4_mesh2,
+        fan_gpu_mesh,
         T_gpu_interp2,
         cmap="plasma",
         alpha=0.8,
         edgecolor="none",
     )
-    ax4.scatter(df["P_gpu"], df["pwm4"], df["T_gpu"], c="red", s=10, alpha=0.5)
+    ax4.scatter(
+        df["P_gpu"], df[fan_for_gpu_power_plot], df["T_gpu"], c="red", s=10, alpha=0.5
+    )
     ax4.set_xlabel("GPU Power (W)", fontsize=10)
-    ax4.set_ylabel("Bottom Intake (pwm4)", fontsize=10)
+    ax4.set_ylabel(f"{fan_gpu_name} ({fan_for_gpu_power_plot})", fontsize=10)
     ax4.set_zlabel("GPU Temp (°C)", fontsize=10)
     ax4.set_title(
-        "GPU Temperature Surface\nf(P_gpu, pwm4)", fontsize=12, fontweight="bold"
+        f"GPU Temperature Surface\nf(P_gpu, {fan_for_gpu_power_plot})",
+        fontsize=12,
+        fontweight="bold",
     )
     fig.colorbar(surf4, ax=ax4, shrink=0.5)
 
@@ -778,7 +1022,7 @@ def generate_all_plots(
             leave=False,
             disable=quiet,
             unit="plot",
-            bar_format="{desc}: {percentage:3.0f}% |{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {postfix}]",
+            bar_format="{desc}: {percentage:3.0f}% |{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}{postfix}]",
         )
     ):
         try:
