@@ -69,11 +69,7 @@ class GPULoadController(LoadController):
 
             # Split flags into list
             cmd_args = flags.split()
-            cmd = (
-                ["uv", "run", "--with", "torch", "python", str(script_path)]
-                + cmd_args
-                + ["-d", str(duration)]
-            )
+            cmd = ["uv", "run", str(script_path)] + cmd_args + ["-d", str(duration)]
 
             # Start in a new session to allow group termination
             self.process = subprocess.Popen(
