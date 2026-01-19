@@ -129,7 +129,9 @@ data_collection:
   # Measurement parameters
   equilibration_check_interval: 1 # How often to sample temperature (seconds)
   equilibration_window: 10.0 # Window to check stability (seconds)
-  equilibration_threshold: 0.5 # Max temp change for equilibrium (°C) - relaxed for dynamic CPUs
+  equilibration_threshold:
+    cpu: 0.5 # Max CPU temp change for equilibrium (°C) - relaxed for dynamic CPUs
+    gpu: 1.0 # Max GPU temp change for equilibrium (°C) - higher since GPU is more stable
   equilibration_max_wait: 60 # Maximum wait time before timeout (seconds) - reduced since threshold is looser
   equilibration_min_wait: 15 # Minimum wait before checking (seconds)
   load_stabilization_time: 10 # Time to wait after starting load (seconds)
@@ -232,3 +234,9 @@ ml_model:
   thermal_saturation_filter:
     max_cpu_temp: 90.0 # Filter out T_cpu >= this (°C)
     max_gpu_temp: 85.0 # Filter out T_gpu >= this (°C)
+
+  # Minimum power thresholds for training
+  # Filter out low-power samples to avoid training on idle/noise data
+  min_power_threshold:
+    cpu: 10.0 # Only train CPU model on samples with P_cpu > this (W)
+    gpu: 5.0 # Only train GPU model on samples with P_gpu > this (W)

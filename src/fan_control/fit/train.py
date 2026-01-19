@@ -98,30 +98,43 @@ class ThermalModel:
         logger.info(f"Training Features: {train_features}")
         logger.info(f"Monotonic Constraints: {cst}")
 
+        # Get minimum power thresholds from config
+        min_power_cfg = self.config.get("min_power_threshold", {"cpu": 10.0, "gpu": 10.0})
+        min_cpu_power = min_power_cfg.get("cpu", 10.0)
+        min_gpu_power = min_power_cfg.get("gpu", 10.0)
+
         # --- Train CPU Model ---
         if "T_cpu" in df.columns and "P_cpu" in df.columns:
             logger.info("Training CPU Model (Monotonic GBM)...")
             # Filter valid power for training to avoid noise at 0W
-            mask = df["P_cpu"] > 10.0
+            mask = df["P_cpu"] > min_cpu_power
             X_cpu = df_eng[mask][train_features]
             y_cpu = df_eng[mask]["T_cpu"]
 
-            self.cpu_model = HistGradientBoostingRegressor(
-                monotonic_cst=cst, **self.hgb_params
-            )
-            self.cpu_model.fit(X_cpu, y_cpu)
+            if len(X_cpu) > 0:
+                self.cpu_model = HistGradientBoostingRegressor(
+                    monotonic_cst=cst, **self.hgb_params
+                )
+                self.cpu_model.fit(X_cpu, y_cpu)
+                logger.info(f"CPU model trained on {len(X_cpu)} samples (P_cpu > {min_cpu_power}W)")
+            else:
+                logger.warning(f"No CPU training samples available (P_cpu > {min_cpu_power}W). Skipping CPU model.")
 
         # --- Train GPU Model ---
         if "T_gpu" in df.columns and "P_gpu" in df.columns:
             logger.info("Training GPU Model (Monotonic GBM)...")
-            mask = df["P_gpu"] > 10.0
+            mask = df["P_gpu"] > min_gpu_power
             X_gpu = df_eng[mask][train_features]
             y_gpu = df_eng[mask]["T_gpu"]
 
-            self.gpu_model = HistGradientBoostingRegressor(
-                monotonic_cst=cst, **self.hgb_params
-            )
-            self.gpu_model.fit(X_gpu, y_gpu)
+            if len(X_gpu) > 0:
+                self.gpu_model = HistGradientBoostingRegressor(
+                    monotonic_cst=cst, **self.hgb_params
+                )
+                self.gpu_model.fit(X_gpu, y_gpu)
+                logger.info(f"GPU model trained on {len(X_gpu)} samples (P_gpu > {min_gpu_power}W)")
+            else:
+                logger.warning(f"No GPU training samples available (P_gpu > {min_gpu_power}W). Skipping GPU model.")
 
     def predict(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         """Predict temperatures."""
@@ -186,12 +199,19 @@ def train_model(config: Dict[str, Any], data_path: Path, output_dir: Path):
     logger.info(f"Total training samples: {len(full_df)}")
 
     # 2. Filter valid data
+    ml_config = config["ml_model"]
+
+    # Get minimum power thresholds
+    min_power_cfg = ml_config.get("min_power_threshold", {"cpu": 10.0, "gpu": 5.0})
+    min_cpu_power = min_power_cfg.get("cpu", 10.0)
+    min_gpu_power = min_power_cfg.get("gpu", 5.0)
+
     # Filter out very low power points for training stability
-    df = full_df[(full_df["P_cpu"] > 10.0) | (full_df["P_gpu"] > 10.0)].copy()
+    df = full_df[(full_df["P_cpu"] > min_cpu_power) | (full_df["P_gpu"] > min_gpu_power)].copy()
+    logger.info(f"Filtered to {len(df)} samples with P_cpu > {min_cpu_power}W or P_gpu > {min_gpu_power}W")
 
     # Filter out thermally-saturated data (thermal throttling region)
     # When CPU hits thermal limit, fans appear ineffective. Remove these points.
-    ml_config = config["ml_model"]
     filter_cfg = ml_config["thermal_saturation_filter"]
     max_cpu_temp = filter_cfg["max_cpu_temp"]
     max_gpu_temp = filter_cfg["max_gpu_temp"]
@@ -222,6 +242,11 @@ def train_model(config: Dict[str, Any], data_path: Path, output_dir: Path):
 
     model.train(train_df)
 
+    # Check if at least one model was trained
+    if model.cpu_model is None and model.gpu_model is None:
+        logger.error("No models were trained (insufficient data). Cannot save model.")
+        raise ValueError(f"No models trained - insufficient data with P_cpu > {min_cpu_power}W or P_gpu > {min_gpu_power}W")
+
     # 4. Validation
     logger.info("Validating model...")
     t_cpu_pred, t_gpu_pred = model.predict(val_df)
@@ -235,6 +260,8 @@ def train_model(config: Dict[str, Any], data_path: Path, output_dir: Path):
         mae_cpu = mean_absolute_error(val_df["T_cpu"], t_cpu_pred)
         metrics["cpu"] = {"rmse": rmse_cpu, "r2": r2_cpu, "mae": mae_cpu}
         print(f"CPU: RMSE={rmse_cpu:.2f}°C, R2={r2_cpu:.4f}, MAE={mae_cpu:.2f}°C")
+    else:
+        logger.info("CPU model not trained (skipped)")
 
     # GPU Metrics
     if model.gpu_model:
@@ -243,6 +270,8 @@ def train_model(config: Dict[str, Any], data_path: Path, output_dir: Path):
         mae_gpu = mean_absolute_error(val_df["T_gpu"], t_gpu_pred)
         metrics["gpu"] = {"rmse": rmse_gpu, "r2": r2_gpu, "mae": mae_gpu}
         print(f"GPU: RMSE={rmse_gpu:.2f}°C, R2={r2_gpu:.4f}, MAE={mae_gpu:.2f}°C")
+    else:
+        logger.info("GPU model not trained (skipped)")
 
     print("\n=== Validation Results (Monotonic GBM) ===")
 

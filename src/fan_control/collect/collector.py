@@ -59,9 +59,13 @@ class TemperatureWindow:
         """Check if window has enough data for stability check."""
         return len(self.timestamps) >= self.max_samples
 
-    def check_equilibration(self, threshold: float) -> Tuple[bool, dict]:
+    def check_equilibration(self, cpu_threshold: float, gpu_threshold: float) -> Tuple[bool, dict]:
         """
         Check if temperatures have equilibrated.
+
+        Args:
+            cpu_threshold: Maximum temperature range for CPU equilibration (°C)
+            gpu_threshold: Maximum temperature range for GPU equilibration (°C)
 
         Returns:
             (is_equilibrated, details_dict)
@@ -81,9 +85,9 @@ class TemperatureWindow:
         cpu_range = max(cpu_valid) - min(cpu_valid) if cpu_valid else None
         gpu_range = max(gpu_valid) - min(gpu_valid) if gpu_valid else None
 
-        # Check stability
-        cpu_stable = cpu_range is not None and cpu_range < threshold
-        gpu_stable = gpu_range is not None and gpu_range < threshold
+        # Check stability with separate thresholds
+        cpu_stable = cpu_range is not None and cpu_range < cpu_threshold
+        gpu_stable = gpu_range is not None and gpu_range < gpu_threshold
 
         # Equilibrated if both stable (or one missing but other stable)
         is_equilibrated = (
@@ -132,7 +136,12 @@ class DataCollector:
             "equilibration_check_interval"
         ]
         self.eq_window = self.data_config["equilibration_window"]
-        self.eq_threshold = self.data_config["equilibration_threshold"]
+
+        # Separate thresholds for CPU and GPU
+        eq_threshold_cfg = self.data_config["equilibration_threshold"]
+        self.eq_threshold_cpu = eq_threshold_cfg["cpu"]
+        self.eq_threshold_gpu = eq_threshold_cfg["gpu"]
+
         self.eq_max_wait = self.data_config["equilibration_max_wait"]
         self.eq_min_wait = self.data_config["equilibration_min_wait"]
 
@@ -484,7 +493,7 @@ class DataCollector:
                 # Update progress bar
                 cpu_str = f"{cpu_temp:.1f}°C" if cpu_temp else "N/A"
                 gpu_str = f"{gpu_temp:.1f}°C" if gpu_temp else "N/A"
-                _, details = window.check_equilibration(self.eq_threshold)
+                _, details = window.check_equilibration(self.eq_threshold_cpu, self.eq_threshold_gpu)
 
                 status = (
                     "Stable"
@@ -506,7 +515,7 @@ class DataCollector:
                 # Check equilibration (only after minimum wait)
                 if elapsed >= self.eq_min_wait:
                     is_equilibrated, details = window.check_equilibration(
-                        self.eq_threshold
+                        self.eq_threshold_cpu, self.eq_threshold_gpu
                     )
 
                     if is_equilibrated:
