@@ -1,5 +1,5 @@
 """
-Unified ML training pipeline orchestration.
+ML pipeline orchestration: plot, fit, simulate.
 """
 
 import sys
@@ -18,13 +18,13 @@ logger = logging.getLogger(__name__)
 
 def train_mode(args) -> None:
     """
-    Unified ML training pipeline - orchestrates fit, plot, and simulate stages.
+    Reproduce ML pipeline - orchestrates plot, fit, and simulate stages in sequence.
 
     Args:
-        args: Parsed command-line arguments with config, run, and stage flags
+        args: Parsed command-line arguments with config and run paths
     """
     print("\n" + "=" * 70)
-    print("ML TRAINING PIPELINE")
+    print("ML PIPELINE REPRODUCTION")
     print("=" * 70 + "\n")
 
     # Load configuration
@@ -54,34 +54,10 @@ def train_mode(args) -> None:
     print(f"Config: {config_path}")
     print(f"Run directory: {run_dir}\n")
 
-    # Determine which stages to run
-    # Default: run all stages unless specific ones are selected
-    stages = []
-    if args.fit or args.plot or args.simulate:
-        # User specified specific stages
-        if args.fit:
-            stages.append("fit")
-        if args.plot:
-            stages.append("plot")
-        if args.simulate:
-            stages.append("simulate")
-    else:
-        # Default: run all stages
-        stages = ["fit", "plot", "simulate"]
-
-    print(f"Running stages: {', '.join(stages)}\n")
-
-    # Run fit stage
-    if "fit" in stages:
-        _run_fit_stage(config, run_dir)
-
-    # Run plot stage
-    if "plot" in stages:
-        _run_plot_stage(run_dir)
-
-    # Run simulate stage
-    if "simulate" in stages:
-        _run_simulate_stage(config, run_dir)
+    # Run all stages in sequence
+    _run_plot_stage(run_dir)
+    _run_fit_stage(config, run_dir)
+    _run_simulate_stage(config, run_dir)
 
     print("\n" + "=" * 70)
     print("✓ Pipeline complete!")

@@ -5,11 +5,8 @@ import argparse
 from dotenv import load_dotenv
 
 from .collect.cli import collect_mode
-from .fit.cli import fit_mode
-from .plot.cli import plot_mode
 from .control.cli import run_mode
 from .control.cool import cool_mode
-from .simulate.cli import simulate_mode
 from .train.cli import train_mode
 
 
@@ -24,14 +21,14 @@ Example usage:
   # Collect thermal data using default config
   sudo fan-control collect --config config.yaml
 
-  # Fit thermal model from collected data
-  fan-control fit --config config.yaml --run data/fan_control_20260119_040722
-
-  # Simulate controller behavior
-  fan-control simulate --config config.yaml --run data/fan_control_20260119_040722
+  # Reproduce ML pipeline (plot, fit, simulate)
+  fan-control repro --config config.yaml --run data/fan_control_20260119_040722
 
   # Run the optimized fan controller
   sudo fan-control run --config config.yaml --run data/fan_control_20260119_040722
+
+  # Cool down the system
+  sudo fan-control cool --config config.yaml
         """,
     )
 
@@ -54,32 +51,6 @@ Example usage:
         help="Override output directory from config",
     )
 
-    # Fit subcommand
-    fit_parser = subparsers.add_parser(
-        "fit",
-        help="Fit thermal model parameters from collected data",
-    )
-    fit_parser.add_argument(
-        "--config",
-        default="config.yaml",
-        help="Path to configuration YAML file (default: config.yaml)",
-    )
-    fit_parser.add_argument(
-        "--run",
-        required=True,
-        help="Path to run directory containing collected CSV data",
-    )
-
-    # Plot subcommand
-    plot_parser = subparsers.add_parser(
-        "plot",
-        help="Generate visualization plots from collected data",
-    )
-    plot_parser.add_argument(
-        "--run",
-        required=True,
-        help="Path to run directory containing collected CSV data",
-    )
 
     # Run subcommand
     run_parser = subparsers.add_parser(
@@ -108,69 +79,32 @@ Example usage:
         help="Path to configuration YAML file (default: config.yaml)",
     )
 
-    # Train subcommand (unified ML pipeline)
-    train_parser = subparsers.add_parser(
-        "train",
-        help="Run ML training pipeline (fit, plot, simulate stages)",
+    # Repro subcommand (unified ML pipeline: plot, fit, simulate)
+    repro_parser = subparsers.add_parser(
+        "repro",
+        help="Reproduce ML pipeline (generate plots, fit model, simulate controller)",
     )
-    train_parser.add_argument(
+    repro_parser.add_argument(
         "--config",
         default="config.yaml",
         help="Path to configuration YAML file (default: config.yaml)",
     )
-    train_parser.add_argument(
+    repro_parser.add_argument(
         "--run",
         required=True,
         help="Path to run directory containing collected CSV data",
     )
-    train_parser.add_argument(
-        "--fit",
-        action="store_true",
-        help="Run only model training stage",
-    )
-    train_parser.add_argument(
-        "--plot",
-        action="store_true",
-        help="Run only visualization stage",
-    )
-    train_parser.add_argument(
-        "--simulate",
-        action="store_true",
-        help="Run only controller simulation stage",
-    )
-
-    # Simulate subcommand
-    simulate_parser = subparsers.add_parser(
-        "simulate",
-        help="Simulate controller behavior on synthetic data",
-    )
-    simulate_parser.add_argument(
-        "--config",
-        default="config.yaml",
-        help="Path to configuration YAML file (default: config.yaml)",
-    )
-    simulate_parser.add_argument(
-        "--run",
-        required=True,
-        help="Path to run directory containing the trained model",
-    )
 
     args = parser.parse_args()
 
-    if args.command == "fit":
-        fit_mode(args)
-    elif args.command == "collect":
+    if args.command == "collect":
         collect_mode(args)
-    elif args.command == "plot":
-        plot_mode(args)
-    elif args.command == "train":
+    elif args.command == "repro":
         train_mode(args)
     elif args.command == "run":
         run_mode(args)
     elif args.command == "cool":
         cool_mode(args)
-    elif args.command == "simulate":
-        simulate_mode(args)
 
 
 if __name__ == "__main__":
