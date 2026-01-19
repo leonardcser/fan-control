@@ -145,7 +145,8 @@ safety:
   emergency_gpu_temp: 85.0
 
   # Power-dependent minimum fan speeds
-  power_dependent_minimums:
+  power_dependent_minimums: []
+    # Example:
     # - component: "cpu" # Options: cpu, gpu
     #   power_threshold: 100 # If power > threshold
     #   pwm2_min: 20
