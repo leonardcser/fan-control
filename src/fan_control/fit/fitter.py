@@ -18,19 +18,22 @@ from .equations import (
 )
 
 
-def load_and_filter_data(csv_path: Path, component: str) -> pd.DataFrame:
+def load_and_filter_data(
+    csv_path: Path, component: str, min_power: float = 5.0
+) -> pd.DataFrame:
     """
     Load data from CSV and filter for quality measurements.
 
     Filters applied:
     - Only equilibrated measurements (equilibrated == True)
-    - Component power > 10W (avoid low-power noise)
+    - Component power > min_power (default 5W to avoid sensor noise)
     - Non-null ambient temperature
     - Convert PWM from 0-255 scale to 0-1 normalized scale
 
     Args:
         csv_path: Path to data.csv file
         component: 'cpu' or 'gpu'
+        min_power: Minimum power threshold in watts (default 5W)
 
     Returns:
         Filtered DataFrame with normalized PWM values
@@ -50,7 +53,7 @@ def load_and_filter_data(csv_path: Path, component: str) -> pd.DataFrame:
     if power_col not in df.columns:
         raise ValueError(f"Missing power column: {power_col}")
 
-    df = cast(pd.DataFrame, df[df[power_col] > 10.0].copy())
+    df = cast(pd.DataFrame, df[df[power_col] > min_power].copy())
     power_filtered_count = len(df)
 
     # Filter out missing ambient temperature
@@ -68,7 +71,7 @@ def load_and_filter_data(csv_path: Path, component: str) -> pd.DataFrame:
         f"  After equilibrated filter: {equilibrated_count} ({initial_count - equilibrated_count} dropped)"
     )
     print(
-        f"  After power > 10W filter: {power_filtered_count} ({equilibrated_count - power_filtered_count} dropped)"
+        f"  After power > {min_power}W filter: {power_filtered_count} ({equilibrated_count - power_filtered_count} dropped)"
     )
     print(
         f"  After ambient temp filter: {final_count} ({power_filtered_count - final_count} dropped)"
@@ -137,7 +140,7 @@ def fit_component_model(
     # Wrapper function for curve_fit
     # curve_fit expects: f(xdata, *params) -> ydata
     # We need to convert our predictor format to this
-    def curve_fit_wrapper(xdata_dummy, *params_array):
+    def curve_fit_wrapper(_xdata_dummy, *params_array):
         """
         Wrapper to convert curve_fit format to our predictor format.
 

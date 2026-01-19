@@ -1,12 +1,22 @@
 """
 Physics model equations for thermal prediction.
 
-SIMPLIFIED LINEAR MODEL based on data analysis:
-- T_cpu = T_amb + P_cpu × (R_base - k_pump·pwm7 - k_fan2·pwm2 - k_fan4·pwm4 - k_fan5·pwm5 - R_min)
-- T_gpu = T_amb + P_gpu × (R_base_gpu - k_fan4·pwm4 - k_fan5·pwm5 - R_min)
+CONDUCTANCE-BASED THERMAL MODEL:
+- Models heat transfer as a serial resistance + convection conductance.
+- R_total = R_serial + 1 / (G_base + G_active)
+- G_active = Σ (k_fan · pwm_fan) + (k_pump · pwm_pump)
+- T_component = T_amb + Power × R_total
 
-Data shows cooling effects are small (~1°C across full range), so linear approximation is appropriate.
-The original complex 1/conductance model had numerical stability issues and didn't match observations.
+Physical Interpretation:
+- R_serial: Irreducible thermal resistance (die-to-IHS, TIM, block base).
+- G_base: Baseline natural convection/radiation conductance.
+- k_fan: Effectiveness of fan in increasing convection conductance.
+- k_pump: Effectiveness of pump in increasing convection conductance.
+
+This model is superior to the linear model because:
+1. It enforces diminishing returns (increasing airflow has less effect at high speeds).
+2. It prevents unphysical negative resistance predictions.
+3. It has a physical asymptote (R_serial) representing the cooling limit.
 """
 
 from dataclasses import dataclass
@@ -17,19 +27,19 @@ from typing import Any, Callable, Dict, List, Optional
 class FanConfig:
     """Configuration for a single fan's contribution to cooling."""
 
-    param: str  # Parameter name (e.g., 'a', 'b', 'c')
-    pump_coupled: bool = False  # Whether this fan couples with pump
-    coupling_param: Optional[str] = None  # Coupling parameter (e.g., 'h')
+    param: str  # Parameter name (e.g., 'k_rad_fan')
+    pump_coupled: bool = False  # Not used in simplified conductance model
+    coupling_param: Optional[str] = None
 
 
 @dataclass
 class ComponentModelConfig:
     """Configuration for a component's thermal model (CPU or GPU)."""
 
-    base_resistance: str  # Parameter name for base resistance
+    base_resistance: str  # Maps to R_serial
     fans: Dict[str, FanConfig]  # Map: device_name -> FanConfig
-    baseline: str  # Baseline conductance parameter
-    pump_effect: Optional[Dict[str, str]] = None  # Pump parameters if applicable
+    baseline: str  # Maps to G_base
+    pump_effect: Optional[Dict[str, str]] = None  # Maps to k_pump
 
     def get_param_names(self) -> List[str]:
         """Get all parameter names used in this component's model."""
@@ -50,9 +60,6 @@ class ComponentModelConfig:
 class ModelConfig:
     """
     Complete thermal model configuration.
-
-    Parsed from config.yaml's 'model' section. Defines which devices affect
-    which components and what parameters to fit.
     """
 
     cpu: ComponentModelConfig
@@ -74,7 +81,6 @@ class ModelConfig:
         if missing_bounds:
             raise ValueError(f"Missing bounds for parameters: {missing_bounds}")
 
-        # Validate bounds format
         for param, bound in self.bounds.items():
             if not isinstance(bound, list) or len(bound) != 2:
                 raise ValueError(
@@ -147,50 +153,42 @@ def build_cpu_predictor(model_config: ModelConfig) -> Callable:
     """
     Build CPU temperature prediction function from model configuration.
 
-    Returns a function: predict(pwm_dict, P_cpu, T_amb, params_dict) -> T_cpu
+    Returns: predict(pwm_dict, P_cpu, T_amb, params) -> T_cpu
 
-    SIMPLIFIED LINEAR MODEL:
-    T_cpu = T_amb + P_cpu × (R_base - cooling_reduction)
-    where cooling_reduction = k_pump·pwm + k_fan1·pwm1 + ... + baseline
+    Model: R_total = R_serial + 1 / (G_base + Σ k·pwm)
     """
     cpu_cfg = model_config.cpu
 
     def predict(
         pwm_dict: Dict[str, float], P_cpu: float, T_amb: float, params: Dict[str, float]
     ) -> float:
-        """Predict CPU temperature given PWM values, power, and ambient temp."""
-        # Base resistance
-        R_base = params[cpu_cfg.base_resistance]
+        # 1. Serial Resistance (Irreducible)
+        R_serial = params[cpu_cfg.base_resistance]
 
-        # Cooling reduction (linear sum of all cooling effects)
-        cooling_reduction = 0.0
+        # 2. Conductance Accumulator
+        G_total = params[cpu_cfg.baseline]  # Start with baseline conductance
 
-        # Pump effect (reduces thermal resistance)
+        # Pump Contribution to Conductance
         if cpu_cfg.pump_effect:
             pump_device = cpu_cfg.pump_effect["device"]
             k_pump = params[cpu_cfg.pump_effect["param"]]
             pwm_pump = pwm_dict.get(pump_device, 0.0)
-            cooling_reduction += k_pump * pwm_pump
+            G_total += k_pump * pwm_pump
 
-        # Fan effects (each fan reduces thermal resistance linearly)
+        # Fan Contributions to Conductance
         for device, fan_config in cpu_cfg.fans.items():
             pwm_fan = pwm_dict.get(device, 0.0)
             k_fan = params[fan_config.param]
-            cooling_reduction += k_fan * pwm_fan
-            # Note: pump_coupled is ignored in simplified model
+            G_total += k_fan * pwm_fan
 
-        # Baseline reduction (always present)
-        cooling_reduction += params[cpu_cfg.baseline]
+        # Prevent division by zero
+        G_total = max(G_total, 1e-6)
 
-        # Total thermal resistance
-        R_total = R_base - cooling_reduction
+        # 3. Total Resistance
+        R_total = R_serial + (1.0 / G_total)
 
-        # Ensure resistance stays positive
-        R_total = max(R_total, 0.01)
-
-        # Temperature prediction
-        T_cpu = T_amb + P_cpu * R_total
-        return T_cpu
+        # 4. Temperature Prediction
+        return T_amb + P_cpu * R_total
 
     return predict
 
@@ -199,42 +197,35 @@ def build_gpu_predictor(model_config: ModelConfig) -> Callable:
     """
     Build GPU temperature prediction function from model configuration.
 
-    Returns a function: predict(pwm_dict, P_gpu, T_amb, params_dict) -> T_gpu
+    Returns: predict(pwm_dict, P_gpu, T_amb, params) -> T_gpu
 
-    SIMPLIFIED LINEAR MODEL:
-    T_gpu = T_amb + P_gpu × (R_base - cooling_reduction)
-    where cooling_reduction = k_fan1·pwm1 + k_fan2·pwm2 + ... + baseline
+    Model: R_total = R_serial + 1 / (G_base + Σ k·pwm)
     """
     gpu_cfg = model_config.gpu
 
     def predict(
         pwm_dict: Dict[str, float], P_gpu: float, T_amb: float, params: Dict[str, float]
     ) -> float:
-        """Predict GPU temperature given PWM values, power, and ambient temp."""
-        # Base resistance
-        R_base = params[gpu_cfg.base_resistance]
+        # 1. Serial Resistance (Irreducible)
+        R_serial = params[gpu_cfg.base_resistance]
 
-        # Cooling reduction (linear sum of all cooling effects)
-        cooling_reduction = 0.0
+        # 2. Conductance Accumulator
+        G_total = params[gpu_cfg.baseline]
 
-        # Fan effects (each fan reduces thermal resistance linearly)
+        # Fan Contributions to Conductance
         for device, fan_config in gpu_cfg.fans.items():
             pwm_fan = pwm_dict.get(device, 0.0)
             k_fan = params[fan_config.param]
-            cooling_reduction += k_fan * pwm_fan
+            G_total += k_fan * pwm_fan
 
-        # Baseline reduction (always present)
-        cooling_reduction += params[gpu_cfg.baseline]
+        # Prevent division by zero
+        G_total = max(G_total, 1e-6)
 
-        # Total thermal resistance
-        R_total = R_base - cooling_reduction
+        # 3. Total Resistance
+        R_total = R_serial + (1.0 / G_total)
 
-        # Ensure resistance stays positive
-        R_total = max(R_total, 0.01)
-
-        # Temperature prediction
-        T_gpu = T_amb + P_gpu * R_total
-        return T_gpu
+        # 4. Temperature Prediction
+        return T_amb + P_gpu * R_total
 
     return predict
 
@@ -248,18 +239,7 @@ def predict_temp(
     params: Dict[str, float],
 ) -> float:
     """
-    Generic temperature predictor for either component.
-
-    Args:
-        component: 'cpu' or 'gpu'
-        model_config: Model configuration
-        pwm_dict: PWM values (normalized 0-1) for all devices
-        power: Component power (W)
-        T_amb: Ambient temperature (°C)
-        params: Fitted parameters dictionary
-
-    Returns:
-        Predicted temperature (°C)
+    Generic temperature predictor.
     """
     if component == "cpu":
         predictor = build_cpu_predictor(model_config)

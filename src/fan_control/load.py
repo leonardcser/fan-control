@@ -74,12 +74,12 @@ class GPULoadController(LoadController):
 
         super().stop()
 
-    def set_load(self, percentage: int, duration: int = 3600) -> bool:
+    def set_load(self, flags: str, duration: int = 3600) -> bool:
         """
-        Set GPU load to specific percentage.
+        Set GPU load using specific flags.
 
         Args:
-            percentage: Target GPU load (0-100)
+            flags: Command line flags for gpu-burn (e.g. "-m 50%")
             duration: How long to run in seconds
 
         Returns:
@@ -87,16 +87,17 @@ class GPULoadController(LoadController):
         """
         self.stop()
 
-        if percentage == 0:
+        if not flags:
             return True
 
         try:
-            # gpu-burn runs at 100% by default
-            # For percentage control, we use -m flag to limit memory usage
-            # This indirectly controls GPU utilization
+            # Split flags into list
+            cmd_args = flags.split()
+            cmd = ["gpu-burn"] + cmd_args + [str(duration)]
+
             # Start in a new session to allow group termination
             self.process = subprocess.Popen(
-                ["gpu-burn", "-m", f"{percentage}%", str(duration)],
+                cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
@@ -118,12 +119,12 @@ class CPULoadController(LoadController):
         super().__init__()
         self.total_cores = os.cpu_count() or 16
 
-    def set_load(self, percentage: int, duration: int = 3600) -> bool:
+    def set_load(self, flags: str, duration: int = 3600) -> bool:
         """
-        Set CPU load to specific percentage.
+        Set CPU load using specific flags.
 
         Args:
-            percentage: Target CPU load (0-100)
+            flags: Command line flags for stress (e.g. "--cpu 6")
             duration: How long to run in seconds
 
         Returns:
@@ -131,23 +132,17 @@ class CPULoadController(LoadController):
         """
         self.stop()
 
-        if percentage == 0:
+        if not flags:
             return True
 
         try:
-            # stress doesn't have --cpu-load like stress-ng
-            # We control load by spawning a proportional number of workers
-            cores_to_use = max(1, int(self.total_cores * percentage / 100))
+            # Split flags into list
+            cmd_args = flags.split()
+            cmd = ["stress"] + cmd_args + ["--timeout", f"{duration}s"]
 
             # Start in a new session to allow group termination
             self.process = subprocess.Popen(
-                [
-                    "stress",
-                    "--cpu",
-                    str(cores_to_use),
-                    "--timeout",
-                    f"{duration}s",
-                ],
+                cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
@@ -169,10 +164,10 @@ class LoadOrchestrator:
         self.load_stabilization_time = load_stabilization_time
         self.gpu_controller = GPULoadController()
         self.cpu_controller = CPULoadController()
-        self.current_cpu_load: Optional[int] = None
-        self.current_gpu_load: Optional[int] = None
+        self.current_cpu_load: Optional[str] = None
+        self.current_gpu_load: Optional[str] = None
 
-    def set_workload(self, cpu_percent: int, gpu_percent: int) -> bool:
+    def set_workload(self, cpu_flags: str, gpu_flags: str) -> bool:
         """
         Set combined CPU and GPU load.
 
@@ -181,17 +176,17 @@ class LoadOrchestrator:
         """
         # Skip if load hasn't changed
         if (
-            self.current_cpu_load == cpu_percent
-            and self.current_gpu_load == gpu_percent
+            self.current_cpu_load == cpu_flags
+            and self.current_gpu_load == gpu_flags
         ):
             return True
 
-        cpu_ok = self.cpu_controller.set_load(cpu_percent)
-        gpu_ok = self.gpu_controller.set_load(gpu_percent)
+        cpu_ok = self.cpu_controller.set_load(cpu_flags)
+        gpu_ok = self.gpu_controller.set_load(gpu_flags)
 
         if cpu_ok and gpu_ok:
-            self.current_cpu_load = cpu_percent
-            self.current_gpu_load = gpu_percent
+            self.current_cpu_load = cpu_flags
+            self.current_gpu_load = gpu_flags
             # Wait for load to stabilize
             time.sleep(self.load_stabilization_time)
             return True

@@ -38,28 +38,37 @@ data_collection:
   pwm7_levels: [60, 100]
 
   # Load levels to test
+  # Note: cpu_load accepts 'stress' flags (e.g. '--cpu 6')
+  #       gpu_load accepts 'gpu-burn' flags (e.g. '-m 50%' or '-tc')
+  #       Empty string "" means idle/off.
   load_levels:
-    - cpu_percent: 0
-      gpu_percent: 0
+    - cpu_load: ""
+      gpu_load: ""
       description: "Idle"
-    - cpu_percent: 50
-      gpu_percent: 0
-      description: "Moderate CPU"
-    - cpu_percent: 100
-      gpu_percent: 0
-      description: "Full CPU"
-    - cpu_percent: 0
-      gpu_percent: 25
-      description: "Moderate GPU"
-    - cpu_percent: 0
-      gpu_percent: 50
-      description: "Full GPU"
-    - cpu_percent: 50
-      gpu_percent: 50
-      description: "Mixed load"
-    - cpu_percent: 100
-      gpu_percent: 50
-      description: "Full system load"
+    
+    # CPU focused loads (assuming 24 cores)
+    - cpu_load: "--cpu 6"
+      gpu_load: ""
+      description: "CPU Heat Max (6 cores)"
+    - cpu_load: "--cpu 24"
+      gpu_load: ""
+      description: "CPU Full Load (24 cores)"
+      
+    # GPU focused loads
+    - cpu_load: ""
+      gpu_load: "-m 50%"
+      description: "GPU Moderate Load"
+    - cpu_load: ""
+      gpu_load: " " # Space to run default full burn
+      description: "GPU Full Load"
+
+    # Mixed loads
+    - cpu_load: "--cpu 12"
+      gpu_load: "-m 50%"
+      description: "Mixed Moderate"
+    - cpu_load: "--cpu 24"
+      gpu_load: " "
+      description: "Full System Load"
 
   # Measurement parameters
   equilibration_check_interval: 1 # How often to sample temperature (seconds)
@@ -123,65 +132,61 @@ output:
 # SIMPLIFIED MODEL based on data analysis showing minimal cooling effects
 model:
   # Model structure - defines which devices affect which components
-  # Analysis showed thermal resistance is nearly constant (~0.39 °C/W for CPU)
-  # with only ~1°C difference across full cooling range
+  # CONDUCTANCE MODEL: R_total = R_serial + 1 / (G_base + sum(k*pwm))
+  # R_base_* -> R_serial (Irreducible resistance)
+  # R_*_min  -> G_base (Baseline natural conductance)
+  # k_*      -> Conductance contribution
   structure:
     cpu:
-      # Simplified model: T = T_amb + P × (R_base - small_cooling_effects)
-      # R_base dominates, cooling provides minor adjustment
-      base_resistance: R_base_cpu
+      base_resistance: R_base_cpu # Irreducible R (serial)
       pump_effect:
         device: pwm7
-        param: k_pump  # Small reduction in R from pump
+        param: k_pump
       fans:
         pwm2:
-          param: k_rad_fan  # Small effect from radiator fan
-          pump_coupled: false  # Simplified - no coupling
+          param: k_rad_fan
+          pump_coupled: false
         pwm4:
-          param: k_intake  # Minor effect from intake fans
+          param: k_intake
         pwm5:
-          param: k_exhaust  # Minor effect from exhaust fans
-      baseline: R_min  # Minimum resistance floor
+          param: k_exhaust
+      baseline: R_min # Baseline Conductance (G_base)
 
     gpu:
-      # GPU shows better cooling response than CPU
-      base_resistance: R_base_gpu
+      base_resistance: R_base_gpu # Irreducible R (serial)
       fans:
         pwm4:
-          param: k_gpu_intake  # Intake fans help GPU
+          param: k_gpu_intake
         pwm5:
-          param: k_gpu_exhaust  # Exhaust fans help GPU
-      baseline: R_gpu_min  # Minimum resistance floor
+          param: k_gpu_exhaust
+      baseline: R_gpu_min # Baseline Conductance (G_base)
 
-  # Initial guesses - based on observed thermal resistance
-  # CPU: ~0.39 °C/W, GPU: ~0.30 °C/W (when loaded)
+  # Initial guesses - adjusted for Conductance Model
+  # CPU R~0.38 => R_serial~0.30 + 1/G~0.08 (G~12.5)
+  # GPU R~0.13 => R_serial~0.10 + 1/G~0.03 (G~33.0)
   initial_guesses:
-    # CPU parameters
-    R_base_cpu: 0.42      # Start slightly above observed mean
-    k_pump: 0.0001        # Very small pump effect
-    k_rad_fan: 0.0001     # Very small radiator fan effect
-    k_intake: 0.00005     # Tiny intake effect on CPU
-    k_exhaust: 0.00005    # Tiny exhaust effect on CPU
-    R_min: 0.001          # Small baseline conductance
+    R_base_cpu: 0.30      # Irreducible resistance
+    k_pump: 5.0           # Pump conductance contrib
+    k_rad_fan: 5.0        # Rad fan conductance contrib
+    k_intake: 2.0         # Intake conductance contrib
+    k_exhaust: 2.0        # Exhaust conductance contrib
+    R_min: 10.0           # G_base (Baseline Conductance)
 
-    # GPU parameters - data shows nearly constant R~0.127 at 300W
-    R_base_gpu: 0.13      # Close to observed resistance
-    k_gpu_intake: 0.0001  # Minimal effect (insufficient data variation)
-    k_gpu_exhaust: 0.0001 # Minimal effect (insufficient data variation)
-    R_gpu_min: 0.0001     # Very small baseline
+    R_base_gpu: 0.10      # Irreducible resistance
+    k_gpu_intake: 10.0    # Intake conductance contrib
+    k_gpu_exhaust: 10.0   # Exhaust conductance contrib
+    R_gpu_min: 30.0       # G_base (Baseline Conductance)
 
-  # Parameter bounds - realistic ranges based on data
+  # Parameter bounds - appropriate for Conductance Model
   bounds:
-    # CPU bounds - observed R range: 0.27-0.41
-    R_base_cpu: [0.35, 0.50]      # Base must be in realistic range
-    k_pump: [0, 0.01]             # Small effect only
-    k_rad_fan: [0, 0.01]          # Small effect only
-    k_intake: [0, 0.05]           # Allowed to be larger (observed hitting 0.01)
-    k_exhaust: [0, 0.01]          # Small effect
-    R_min: [0, 0.05]              # Small baseline
+    R_base_cpu: [0.10, 0.40]      # R_serial must be < Total R (~0.4)
+    k_pump: [0, 50.0]             # Conductance gain
+    k_rad_fan: [0, 50.0]
+    k_intake: [0, 50.0]
+    k_exhaust: [0, 50.0]
+    R_min: [1.0, 100.0]           # G_base (Conductance)
 
-    # GPU bounds - observed R~0.127 at 300W
-    R_base_gpu: [0.10, 0.20]       # Tight range around observed value
-    k_gpu_intake: [0, 0.05]        # Relaxed: data suggests ~0.003-0.004
-    k_gpu_exhaust: [0, 0.05]       # Relaxed: data suggests ~0.002
-    R_gpu_min: [0, 0.01]           # Very small baseline
+    R_base_gpu: [0.05, 0.15]      # R_serial must be < Total R (~0.13)
+    k_gpu_intake: [0, 100.0]
+    k_gpu_exhaust: [0, 100.0]
+    R_gpu_min: [10.0, 200.0]      # G_base (Conductance)

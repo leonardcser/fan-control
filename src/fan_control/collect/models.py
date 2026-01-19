@@ -27,9 +27,9 @@ class MeasurementPoint:
     T_cpu: float  # CPU temperature
     T_gpu: float  # GPU temperature
 
-    # Load settings (percentage)
-    cpu_load_target: int  # Target CPU load (0-100)
-    gpu_load_target: int  # Target GPU load (0-100)
+    # Load settings (flags)
+    cpu_load_flags: str  # Stress flags (e.g. "--cpu 6")
+    gpu_load_flags: str  # gpu-burn flags (e.g. "-m 50%")
 
     # Metadata
     stabilization_time: float  # Time waited for equilibrium (seconds)
@@ -51,8 +51,8 @@ class MeasurementPoint:
             "T_amb": self.T_amb,
             "T_cpu": self.T_cpu,
             "T_gpu": self.T_gpu,
-            "cpu_load_target": self.cpu_load_target,
-            "gpu_load_target": self.gpu_load_target,
+            "cpu_load_flags": self.cpu_load_flags,
+            "gpu_load_flags": self.gpu_load_flags,
             "stabilization_time": self.stabilization_time,
             "equilibrated": self.equilibrated,
             "equilibration_reason": self.equilibration_reason,
@@ -75,8 +75,8 @@ class MeasurementPoint:
                 "T_amb",
                 "T_cpu",
                 "T_gpu",
-                "cpu_load_target",
-                "gpu_load_target",
+                "cpu_load_flags",
+                "gpu_load_flags",
                 "stabilization_time",
                 "equilibrated",
                 "equilibration_reason",
@@ -90,8 +90,8 @@ class TestPoint:
     """A test configuration to measure."""
 
     pwm_values: dict[str, int]  # 0-100 percentage
-    cpu_percent: int  # 0-100 percentage
-    gpu_percent: int  # 0-100 percentage
+    cpu_load_flags: str  # stress flags
+    gpu_load_flags: str  # gpu-burn flags
     description: str = ""
 
 

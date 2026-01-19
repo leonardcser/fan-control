@@ -277,11 +277,11 @@ def plot_pairwise_interactions(df: pd.DataFrame) -> plt.Figure:
         df_plot = df_plot.sample(100, random_state=42)
 
     g = sns.pairplot(df_plot, diag_kind="kde", plot_kws={"alpha": 0.6, "s": 40})
-    g.fig.suptitle(
+    g.figure.suptitle(
         "Pairwise Variable Interactions", y=1.01, fontsize=16, fontweight="bold"
     )
 
-    return g.fig
+    return g.figure
 
 
 def plot_cooling_effectiveness(df: pd.DataFrame) -> plt.Figure:
@@ -546,7 +546,7 @@ def plot_ambient_normalized(df: pd.DataFrame) -> plt.Figure:
 
 def plot_3d_surfaces(df: pd.DataFrame) -> plt.Figure:
     """Create 3D surface plots showing temperature as function of two variables"""
-    from mpl_toolkits.mplot3d import Axes3D
+    import mpl_toolkits.mplot3d  # noqa: F401
 
     fig = plt.figure(figsize=(18, 12))
 

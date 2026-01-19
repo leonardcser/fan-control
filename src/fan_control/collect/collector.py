@@ -124,7 +124,7 @@ class DataCollector:
         self.measurements: List[MeasurementPoint] = []
 
     def generate_test_points_for_load(
-        self, cpu_percent: int, gpu_percent: int, description: str
+        self, cpu_load_flags: str, gpu_load_flags: str, description: str
     ):
         """
         Generator that yields test points for a specific load level.
@@ -133,8 +133,8 @@ class DataCollector:
         This allows replacing skipped/aborted points to maintain target sample count.
 
         Args:
-            cpu_percent: CPU load percentage
-            gpu_percent: GPU load percentage
+            cpu_load_flags: CPU load flags (stress)
+            gpu_load_flags: GPU load flags (gpu-burn)
             description: Load description
 
         Yields:
@@ -178,8 +178,8 @@ class DataCollector:
 
                     yield TestPoint(
                         pwm_values=pwm_map,
-                        cpu_percent=cpu_percent,
-                        gpu_percent=gpu_percent,
+                        cpu_load_flags=cpu_load_flags,
+                        gpu_load_flags=gpu_load_flags,
                         description=description,
                     )
 
@@ -200,8 +200,8 @@ class DataCollector:
 
                 yield TestPoint(
                     pwm_values=pwm_map,
-                    cpu_percent=cpu_percent,
-                    gpu_percent=gpu_percent,
+                    cpu_load_flags=cpu_load_flags,
+                    gpu_load_flags=gpu_load_flags,
                     description=description,
                 )
 
@@ -219,8 +219,8 @@ class DataCollector:
 
                     yield TestPoint(
                         pwm_values=pwm_map,
-                        cpu_percent=cpu_percent,
-                        gpu_percent=gpu_percent,
+                        cpu_load_flags=cpu_load_flags,
+                        gpu_load_flags=gpu_load_flags,
                         description=description,
                     )
 
@@ -364,8 +364,8 @@ class DataCollector:
             T_amb=ambient_temp_avg,
             T_cpu=cpu_temp_avg,
             T_gpu=gpu_temp_avg,
-            cpu_load_target=point.cpu_percent,
-            gpu_load_target=point.gpu_percent,
+            cpu_load_flags=point.cpu_load_flags,
+            gpu_load_flags=point.gpu_load_flags,
             stabilization_time=actual_stabilization_time,
             equilibrated=eq_info["equilibrated"],
             equilibration_reason=eq_info.get("reason"),
@@ -489,12 +489,13 @@ class DataCollector:
         ) as main_pbar:
             # Process each load level
             for load_idx, load in enumerate(load_levels, 1):
-                cpu_load = load["cpu_percent"]
-                gpu_load = load["gpu_percent"]
+                cpu_load = load.get("cpu_load", "")
+                gpu_load = load.get("gpu_load", "")
                 description = load["description"]
 
                 tqdm.write(f"\n{'=' * 80}")
-                tqdm.write(f"Load Level {load_idx}/{len(load_levels)}: {description} (CPU {cpu_load}%, GPU {gpu_load}%)")
+                tqdm.write(f"Load Level {load_idx}/{len(load_levels)}: {description}")
+                tqdm.write(f"  CPU: '{cpu_load}' | GPU: '{gpu_load}'")
                 tqdm.write(f"{'=' * 80}")
 
                 # Set load for the entire group

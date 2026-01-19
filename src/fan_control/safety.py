@@ -95,7 +95,7 @@ class SafetyMonitor:
         print("Stopping all load generation...")
         self.load_orchestrator.stop_all()
 
-    def _signal_handler(self, signum, frame) -> None:
+    def _signal_handler(self, signum, _frame) -> None:
         """Handle interrupt signals."""
         print(f"\n\nReceived signal {signum}, performing emergency shutdown...")
         self.emergency_shutdown(f"Interrupted by signal {signum}")
