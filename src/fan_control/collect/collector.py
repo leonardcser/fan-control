@@ -480,9 +480,11 @@ class DataCollector:
                 except AbortPointError as e:
                     tqdm.write(f"\n✗ ABORT: {e}")
                     tqdm.write(
-                        "  Setting fans to full speed and aborting this test point"
+                        f"  Setting fans to full speed and cooling down for {self.safety.abort_cooldown_time}s..."
                     )
                     self.safety._apply_abort_speeds()
+                    # Wait for cooldown at full speed
+                    time.sleep(self.safety.abort_cooldown_time)
                     raise
 
                 # Read temperatures

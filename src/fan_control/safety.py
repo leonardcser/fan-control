@@ -38,6 +38,7 @@ class SafetyMonitor:
         self.emergency_gpu_temp = safety_config["emergency_gpu_temp"]
         self.abort_cpu_temp = safety_config["abort_cpu_temp"]
         self.abort_gpu_temp = safety_config["abort_gpu_temp"]
+        self.abort_cooldown_time = safety_config["abort_cooldown_time"]
 
     def check_safety(self) -> None:
         """

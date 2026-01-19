@@ -178,6 +178,7 @@ safety:
   # Abort thresholds - stop current test point and abort to next
   abort_cpu_temp: 95.0
   abort_gpu_temp: 80.0
+  abort_cooldown_time: 15 # Seconds to wait at full speed after abort
 
   # Emergency shutdown limits (fatal)
   emergency_cpu_temp: 100.0
