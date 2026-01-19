@@ -39,7 +39,7 @@ data_collection:
 
   # Load levels to test
   # Note: cpu_load accepts 'stress' flags (e.g. '--cpu 6')
-  #       gpu_load accepts 'gpu-burn' flags (e.g. '-m 50%' or '-tc')
+  #       gpu_load accepts 'gpu_load.py' flags (e.g. '--load 50 --memory 30')
   #       Empty string "" means idle/off.
   load_levels:
     # - cpu_load: ""

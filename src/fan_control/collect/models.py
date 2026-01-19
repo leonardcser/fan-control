@@ -29,7 +29,7 @@ class MeasurementPoint:
 
     # Load settings (flags)
     cpu_load_flags: str  # Stress flags (e.g. "--cpu 6")
-    gpu_load_flags: str  # gpu-burn flags (e.g. "-m 50%")
+    gpu_load_flags: str  # gpu_load.py flags (e.g. "--load 50 --memory 30")
 
     # Metadata
     stabilization_time: float  # Time waited for equilibrium (seconds)
@@ -91,7 +91,7 @@ class TestPoint:
 
     pwm_values: dict[str, int]  # 0-100 percentage
     cpu_load_flags: str  # stress flags
-    gpu_load_flags: str  # gpu-burn flags
+    gpu_load_flags: str  # gpu_load.py flags
     description: str = ""
 
 

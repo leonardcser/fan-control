@@ -134,7 +134,7 @@ class DataCollector:
 
         Args:
             cpu_load_flags: CPU load flags (stress)
-            gpu_load_flags: GPU load flags (gpu-burn)
+            gpu_load_flags: GPU load flags (gpu_load.py)
             description: Load description
 
         Yields:

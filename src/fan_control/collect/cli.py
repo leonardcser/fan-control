@@ -31,7 +31,7 @@ def check_prerequisites() -> bool:
     # Check required tools
     required_tools = {
         "stress": "CPU stress testing",
-        "gpu-burn": "GPU stress testing",
+        "uv": "GPU load tool runner",
         "sensors": "Temperature monitoring",
         "nvidia-smi": "GPU monitoring",
         "turbostat": "CPU power monitoring",

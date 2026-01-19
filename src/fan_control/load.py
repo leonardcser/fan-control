@@ -5,6 +5,7 @@ import subprocess
 import time
 import signal
 from typing import Optional
+from pathlib import Path
 
 
 class LoadController:
@@ -35,43 +36,12 @@ class LoadController:
 
 
 class GPULoadController(LoadController):
-    """Control GPU load using gpu-burn."""
+    """Control GPU load using gpu_load.py."""
 
     def stop(self) -> None:
         """
         Stop the GPU load process safely.
-
-        We attempt to kill the child processes (workers) first while keeping
-        the parent alive. This is because:
-        1. gpu-burn parent exits immediately on SIGTERM without waiting for children
-        2. If parent dies, the pipe to children closes
-        3. Children writing to closed pipe get SIGPIPE and die immediately
-        4. Immediate death skips cleanup (cuMemFree), leaving GPU in bad state
-
-        By killing children first, they can cleanup and exit gracefully, causing
-        the parent to exit naturally when it detects no active clients.
         """
-        if self.process:
-            try:
-                # Attempt to kill children first using pkill
-                # -P <ppid> matches processes whose parent is ppid
-                subprocess.run(
-                    ["pkill", "-TERM", "-P", str(self.process.pid)],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    check=False,
-                )
-
-                # Give children time to cleanup and parent time to notice and exit
-                try:
-                    self.process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    # If graceful shutdown failed, will fall through to base stop()
-                    pass
-            except (FileNotFoundError, Exception):
-                # If pkill missing or other error, fall through to base stop()
-                pass
-
         super().stop()
 
     def set_load(self, flags: str, duration: int = 3600) -> bool:
@@ -79,7 +49,7 @@ class GPULoadController(LoadController):
         Set GPU load using specific flags.
 
         Args:
-            flags: Command line flags for gpu-burn (e.g. "-m 50%")
+            flags: Command line flags for gpu_load.py (e.g. "--load 50")
             duration: How long to run in seconds
 
         Returns:
@@ -92,9 +62,18 @@ class GPULoadController(LoadController):
             return True
 
         try:
+            # Get absolute path to the gpu_load.py script
+            # Assuming it's in tools/ relative to the project root
+            root_dir = Path(__file__).parent.parent.parent
+            script_path = root_dir / "tools" / "gpu_load.py"
+
             # Split flags into list
             cmd_args = flags.split()
-            cmd = ["gpu-burn"] + cmd_args + [str(duration)]
+            cmd = (
+                ["uv", "run", "--with", "torch", "python", str(script_path)]
+                + cmd_args
+                + ["-d", str(duration)]
+            )
 
             # Start in a new session to allow group termination
             self.process = subprocess.Popen(
@@ -106,7 +85,7 @@ class GPULoadController(LoadController):
             return True
 
         except FileNotFoundError:
-            print("Error: gpu-burn not found. Install it first.")
+            print("Error: uv not found. Install it first.")
             return False
         except Exception as e:
             print(f"Error starting GPU load: {e}")
@@ -177,10 +156,7 @@ class LoadOrchestrator:
             True if both loads started successfully
         """
         # Skip if load hasn't changed
-        if (
-            self.current_cpu_load == cpu_flags
-            and self.current_gpu_load == gpu_flags
-        ):
+        if self.current_cpu_load == cpu_flags and self.current_gpu_load == gpu_flags:
             return True
 
         cpu_ok = self.cpu_controller.set_load(cpu_flags)
@@ -212,7 +188,7 @@ class LoadOrchestrator:
             stderr=subprocess.DEVNULL,
         )
         subprocess.run(
-            ["pkill", "-9", "gpu-burn"],
+            ["pkill", "-9", "-f", "gpu_load.py"],
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
