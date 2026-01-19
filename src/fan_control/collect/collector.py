@@ -228,15 +228,19 @@ class DataCollector:
                     )
 
         # === Phase 2: Single Fan Sweep (Optional) ===
-        # Run each fan individually at varying speeds (min to max), all others at 0%
-        # This identifies each fan's cooling contribution in isolation
+        # Run each fan individually at varying speeds (min to max), others at their minimum configured level
+        # This identifies each fan's cooling contribution while maintaining baseline cooling
         # Runs after boundary sweep (more extreme conditions)
         if self.enable_single_fan_sweep:
             for sweep_key in device_keys:
                 for step_pct in self.data_config["single_fan_sweep_steps"]:
-                    # Create PWM map with only one fan varying, others at 0
-                    pwm_map = {key: 0 for key in device_keys}
-                    pwm_map[sweep_key] = pct_to_pwm(sweep_key, step_pct)
+                    # Create PWM map with one fan varying, others at their minimum level
+                    pwm_map = {}
+                    for key in device_keys:
+                        if key == sweep_key:
+                            pwm_map[key] = pct_to_pwm(key, step_pct)
+                        else:
+                            pwm_map[key] = device_ranges[key]["min"]
 
                     yield TestPoint(
                         pwm_values=pwm_map,
