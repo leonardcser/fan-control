@@ -6,8 +6,9 @@ import logging
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
-from typing import Dict, List, Tuple, Any
+from typing import Dict, Tuple, Any
 from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from sklearn.model_selection import train_test_split
 
@@ -18,14 +19,26 @@ class ThermalModel:
     """
     Wrapper for ML-based thermal models (CPU and GPU).
     Handles feature engineering, training, and prediction.
+
+    NEW STRATEGY: Target Resistance (R) instead of Temperature (T)
+    T = T_amb + P * R_pred(features)
+    This forces the fan effect to scale with Power.
     """
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.features = config["features"]
         self.hyperparams = config.get("hyperparameters", {})
-        self.cpu_model = GradientBoostingRegressor(**self.hyperparams)
-        self.gpu_model = GradientBoostingRegressor(**self.hyperparams)
+
+        # 1. Base Models (Context: Power, Ambient -> Baseline Resistance)
+        self.cpu_base_model = GradientBoostingRegressor(**self.hyperparams)
+        self.gpu_base_model = GradientBoostingRegressor(**self.hyperparams)
+
+        # 2. Fan Models (Control: Fan Speed -> Resistance Reduction)
+        # We force positive coefficients because 1/PWM should increase Resistance
+        self.cpu_fan_model = LinearRegression(positive=True)
+        self.gpu_fan_model = LinearRegression(positive=True)
+
         self.feature_names_ = None  # Set after training
 
     def _engineer_features(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -50,49 +63,129 @@ class ThermalModel:
             if "inv_pwm4" in df_eng.columns:
                 df_eng["P_gpu_pwm4"] = df_eng["P_gpu"] * df_eng["inv_pwm4"]
 
+        # 3. Fan-Fan Interactions (e.g. Pump * Fan)
+        # R_total ~ 1/(Flow_water * Flow_air) => inv_pwm_water * inv_pwm_air
+        if "inv_pwm2" in df_eng.columns and "inv_pwm7" in df_eng.columns:
+            df_eng["interact_pwm2_pwm7"] = df_eng["inv_pwm2"] * df_eng["inv_pwm7"]
+
         return df_eng
 
-    def _get_feature_matrix(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Extract and engineer features for the model."""
+    def train(self, df: pd.DataFrame):
+        """Train 2-stage models (Base + Residual) for CPU and GPU."""
         df_eng = self._engineer_features(df)
 
-        # Base features
-        cols = [f for f in self.features if f in df_eng.columns]
+        # Define feature sets
 
-        # Add engineered features if they exist
-        eng_cols = [c for c in df_eng.columns if c.startswith("inv_") or "_pwm" in c]
-        # Filter eng_cols to ensure we don't duplicate or include targets
-        eng_cols = [
-            c for c in eng_cols if c not in cols and c not in ["T_cpu", "T_gpu"]
-        ]
+        fan_feats = [c for c in df_eng.columns if c.startswith("inv_")]
 
-        final_cols = cols + eng_cols
+        if "T_cpu" in df.columns and "P_cpu" in df.columns and "T_amb" in df.columns:
+            logger.info("Training CPU Model (2-Stage)...")
 
-        # Save feature names during training
-        if self.feature_names_ is None:
-            self.feature_names_ = final_cols
+            # 1. Prepare Data
+            mask = df["P_cpu"] > 10.0
+            data = df_eng[mask].copy()
 
-        # During prediction, ensure we have the same columns
-        return df_eng[self.feature_names_]
+            # Calculate Target Resistance
+            delta_T = data["T_cpu"] - data["T_amb"]
+            R_cpu = delta_T / data["P_cpu"]
 
-    def train(self, df: pd.DataFrame):
-        """Train both CPU and GPU models."""
-        X = self._get_feature_matrix(df)
+            # 2. Train Base Model (P_cpu, T_amb -> R_cpu)
+            X_base = data[["P_cpu", "T_amb"]]
+            self.cpu_base_model.fit(X_base, R_cpu)
 
-        if "T_cpu" in df.columns:
-            logger.info("Training CPU Model...")
-            self.cpu_model.fit(X, df["T_cpu"])
+            # 3. Calculate Residuals
+            R_base_pred = self.cpu_base_model.predict(X_base)
+            R_resid = R_cpu - R_base_pred
 
-        if "T_gpu" in df.columns:
-            logger.info("Training GPU Model...")
-            self.gpu_model.fit(X, df["T_gpu"])
+            # 4. Train Fan Model (inv_pwm -> R_resid)
+            # Only use configured fan features
+            cpu_fan_feats = [
+                f
+                for f in fan_feats
+                if f in self.features or f.replace("inv_", "") in self.features
+            ]
+
+            # Include interactions if components are in features
+            if "interact_pwm2_pwm7" in df_eng.columns:
+                # Check if base features are in self.features
+                if "pwm2" in self.features and "pwm7" in self.features:
+                    cpu_fan_feats.append("interact_pwm2_pwm7")
+
+            # Fallback if self.features uses raw pwm names
+            if not cpu_fan_feats:
+                cpu_fan_feats = [
+                    f for f in fan_feats if f.replace("inv_", "") in self.features
+                ]
+
+            X_fan = data[cpu_fan_feats]
+            self.cpu_fan_model.fit(X_fan, R_resid)
+
+            logger.info(
+                f"CPU Fan Coefficients: {dict(zip(cpu_fan_feats, self.cpu_fan_model.coef_))}"
+            )
+
+        if "T_gpu" in df.columns and "P_gpu" in df.columns and "T_amb" in df.columns:
+            logger.info("Training GPU Model (2-Stage)...")
+
+            mask = df["P_gpu"] > 10.0
+            data = df_eng[mask].copy()
+
+            delta_T = data["T_gpu"] - data["T_amb"]
+            R_gpu = delta_T / data["P_gpu"]
+
+            X_base = data[["P_gpu", "T_amb"]]
+            self.gpu_base_model.fit(X_base, R_gpu)
+
+            R_base_pred = self.gpu_base_model.predict(X_base)
+            R_resid = R_gpu - R_base_pred
+
+            X_fan = data[fan_feats]
+            self.gpu_fan_model.fit(X_fan, R_resid)
+
+            logger.info(
+                f"GPU Fan Coefficients: {dict(zip(fan_feats, self.gpu_fan_model.coef_))}"
+            )
+
+        # Store feature names for prediction consistency
+        self.feature_names_ = {
+            "base": [
+                "P_cpu",
+                "P_gpu",
+                "T_amb",
+            ],  # Superset, handled by column selection
+            "fan": fan_feats,
+        }
 
     def predict(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
-        """Predict temperatures. Returns (T_cpu_pred, T_gpu_pred)."""
-        X = self._get_feature_matrix(df)
+        """Predict temperatures using 2-stage model."""
+        df_eng = self._engineer_features(df)
+        fan_feats = [c for c in df_eng.columns if c.startswith("inv_")]
 
-        t_cpu = self.cpu_model.predict(X)
-        t_gpu = self.gpu_model.predict(X)
+        # --- CPU Prediction ---
+        t_cpu = np.zeros(len(df))
+        if hasattr(self, "cpu_base_model"):  # Check if trained
+            # 1. Base Resistance
+            X_base = df_eng[["P_cpu", "T_amb"]]
+            r_base = self.cpu_base_model.predict(X_base)
+
+            X_fan = df_eng[self.cpu_fan_model.feature_names_in_]
+            r_resid = self.cpu_fan_model.predict(X_fan)
+
+            # 3. Total R -> Temperature
+            r_total = r_base + r_resid
+            t_cpu = df["T_amb"] + df["P_cpu"] * r_total
+
+        # --- GPU Prediction ---
+        t_gpu = np.zeros(len(df))
+        if hasattr(self, "gpu_base_model"):
+            X_base = df_eng[["P_gpu", "T_amb"]]
+            r_base = self.gpu_base_model.predict(X_base)
+
+            X_fan = df_eng[fan_feats]
+            r_resid = self.gpu_fan_model.predict(X_fan)
+
+            r_total = r_base + r_resid
+            t_gpu = df["T_amb"] + df["P_gpu"] * r_total
 
         return t_cpu, t_gpu
 
@@ -129,9 +222,9 @@ def train_model(config: Dict[str, Any], data_path: Path, output_dir: Path):
     full_df = pd.concat(df_list, ignore_index=True)
     logger.info(f"Total training samples: {len(full_df)}")
 
-    # 2. Filter valid data (Equilibrated only ideally, but we'll use all for now)
-    # df = full_df[full_df['equilibrated'] == True].copy()
-    df = full_df.copy()  # Use all data for robustness
+    # 2. Filter valid data
+    # Filter out very low power points for training stability
+    df = full_df[(full_df["P_cpu"] > 10.0) | (full_df["P_gpu"] > 10.0)].copy()
 
     # 3. Initialize and Train Model
     ml_config = config["ml_model"]
@@ -189,7 +282,7 @@ def plot_validation(
     plt.plot([min_val, max_val], [min_val, max_val], "r--", label="Perfect Fit")
     plt.xlabel("Actual CPU Temp (°C)")
     plt.ylabel("Predicted CPU Temp (°C)")
-    plt.title("CPU Temperature: Predicted vs Actual (Gradient Boosting)")
+    plt.title("CPU Temperature: Predicted vs Actual (GBM on Resistance)")
     plt.legend()
     plt.savefig(output_dir / "val_cpu_pred_vs_actual.png")
     plt.close()
@@ -202,7 +295,7 @@ def plot_validation(
     plt.plot([min_val, max_val], [min_val, max_val], "r--", label="Perfect Fit")
     plt.xlabel("Actual GPU Temp (°C)")
     plt.ylabel("Predicted GPU Temp (°C)")
-    plt.title("GPU Temperature: Predicted vs Actual (Gradient Boosting)")
+    plt.title("GPU Temperature: Predicted vs Actual (GBM on Resistance)")
     plt.legend()
     plt.savefig(output_dir / "val_gpu_pred_vs_actual.png")
     plt.close()

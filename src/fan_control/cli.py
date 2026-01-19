@@ -7,6 +7,9 @@ from dotenv import load_dotenv
 from .collect.cli import collect_mode
 from .fit.cli import fit_mode
 from .plot.cli import plot_mode
+from .control.cli import run_mode
+from .control.cool import cool_mode
+from .validate.cli import validate_mode
 
 
 def main() -> None:
@@ -20,17 +23,14 @@ Example usage:
   # Collect thermal data using default config
   sudo fan-control collect --config config.yaml
 
-  # Collect with custom output directory
-  sudo fan-control collect --config config.yaml --output ./my_data
-
   # Fit thermal model from collected data
   fan-control fit --config config.yaml --run data/fan_control_20260119_040722
 
-  # Generate visualization plots from collected data
-  fan-control plot --run data/fan_control_20260119_040722
+  # Validate/Simulate controller behavior
+  fan-control validate --config config.yaml --run data/fan_control_20260119_040722
 
-The collected data will be used to fit the thermal model parameters
-described in PHYSICS_MODEL.md.
+  # Run the optimized fan controller
+  sudo fan-control run --config config.yaml --run data/fan_control_20260119_040722
         """,
     )
 
@@ -80,6 +80,49 @@ described in PHYSICS_MODEL.md.
         help="Path to run directory containing collected CSV data",
     )
 
+    # Run subcommand
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Run the optimized fan controller loop",
+    )
+    run_parser.add_argument(
+        "--config",
+        default="config.yaml",
+        help="Path to configuration YAML file (default: config.yaml)",
+    )
+    run_parser.add_argument(
+        "--run",
+        required=True,
+        help="Path to run directory containing the trained model",
+    )
+
+    # Cool subcommand
+    cool_parser = subparsers.add_parser(
+        "cool",
+        help="Set all fans to max speed to cool down the system",
+    )
+    cool_parser.add_argument(
+        "--config",
+        default="config.yaml",
+        help="Path to configuration YAML file (default: config.yaml)",
+    )
+
+    # Validate subcommand
+    validate_parser = subparsers.add_parser(
+        "validate",
+        help="Simulate controller behavior on synthetic data",
+    )
+    validate_parser.add_argument(
+        "--config",
+        default="config.yaml",
+        help="Path to configuration YAML file (default: config.yaml)",
+    )
+    validate_parser.add_argument(
+        "--run",
+        required=True,
+        help="Path to run directory containing the trained model",
+    )
+
     args = parser.parse_args()
 
     if args.command == "fit":
@@ -88,6 +131,12 @@ described in PHYSICS_MODEL.md.
         collect_mode(args)
     elif args.command == "plot":
         plot_mode(args)
+    elif args.command == "run":
+        run_mode(args)
+    elif args.command == "cool":
+        cool_mode(args)
+    elif args.command == "validate":
+        validate_mode(args)
 
 
 if __name__ == "__main__":

@@ -44,37 +44,50 @@ def get_gpu_info():
     }
 
 
-def allocate_memory(target_percent: float) -> torch.Tensor:
-    """Allocate GPU memory to reach target percentage."""
-    info = get_gpu_info()
+def allocate_memory(target_percent: float, reserved_gb: float = 1.0) -> list[torch.Tensor]:
+    """
+    Allocate GPU memory to reach target percentage of total VRAM.
+
+    Args:
+        target_percent: Target percentage of TOTAL VRAM to use (0-100)
+        reserved_gb: GB to reserve for compute workload and PyTorch overhead
+
+    Returns:
+        List of tensors (kept as list to avoid reallocation during concat)
+    """
     total_bytes = torch.cuda.get_device_properties(0).total_memory
-    target_bytes = int(total_bytes * target_percent / 100)
+    total_gb = total_bytes / 1e9
 
-    # Allocate as float32 tensor
-    num_floats = target_bytes // 4
+    # Calculate how much to allocate
+    # target_percent of total, minus what we reserve for compute
+    target_gb = (total_gb * target_percent / 100) - reserved_gb
+    target_gb = max(0, target_gb)
 
-    # Allocate in chunks to avoid OOM
-    chunk_size = 256 * 1024 * 1024 // 4  # 256MB chunks
+    if target_gb <= 0:
+        print(f"  Target memory ({target_percent}%) leaves no room after {reserved_gb}GB reserved")
+        return []
+
+    target_bytes = int(target_gb * 1e9)
+
+    # Allocate in chunks to avoid OOM and fragmentation
+    chunk_size_bytes = 512 * 1024 * 1024  # 512MB chunks
     tensors = []
-    allocated = 0
+    allocated_bytes = 0
 
-    while allocated < num_floats:
-        chunk = min(chunk_size, num_floats - allocated)
+    while allocated_bytes < target_bytes:
+        remaining = target_bytes - allocated_bytes
+        chunk_bytes = min(chunk_size_bytes, remaining)
+        num_floats = chunk_bytes // 4
+
         try:
-            t = torch.zeros(chunk, dtype=torch.float32, device="cuda")
+            t = torch.zeros(num_floats, dtype=torch.float32, device="cuda")
             tensors.append(t)
-            allocated += chunk
+            allocated_bytes += chunk_bytes
         except torch.cuda.OutOfMemoryError:
-            print(f"Memory allocation stopped at {allocated * 4 / 1e9:.1f} GB")
+            print(f"  Memory allocation stopped at {allocated_bytes / 1e9:.2f} GB (OOM)")
             break
 
-    # Concatenate into single tensor for easier management
-    if tensors:
-        result = torch.cat(tensors)
-        del tensors
-        torch.cuda.empty_cache()
-        return result
-    return torch.tensor([], device="cuda")
+    return tensors
 
 
 def create_workload(size: int = 4096) -> tuple[torch.Tensor, torch.Tensor]:
@@ -86,6 +99,7 @@ def create_workload(size: int = 4096) -> tuple[torch.Tensor, torch.Tensor]:
 
 def run_compute_burst(a: torch.Tensor, b: torch.Tensor, iterations: int = 10):
     """Run matrix multiplications."""
+    c = None
     for _ in range(iterations):
         c = torch.mm(a, b)
         torch.cuda.synchronize()
@@ -117,17 +131,22 @@ def run_load(
     print(f"  Duration: {duration}s" if duration else "  Duration: indefinite")
     print()
 
-    # Allocate memory first
-    print("Allocating memory...")
-    mem_tensor = allocate_memory(memory_percent)
-    info = get_gpu_info()
-    print(f"  Allocated: {info['allocated_gb']:.1f} GB / {info['total_gb']:.1f} GB")
-    print()
-
-    # Create compute workload
+    # Create compute workload FIRST (to know how much memory it needs)
     print("Creating compute workload...")
     a, b = create_workload(matrix_size)
+    torch.cuda.synchronize()
+    workload_mem = torch.cuda.memory_allocated(0) / 1e9
     print(f"  Matrix size: {matrix_size}x{matrix_size}")
+    print(f"  Workload memory: {workload_mem:.2f} GB")
+    print()
+
+    # Now allocate additional memory to reach target
+    print("Allocating memory...")
+    # Reserve extra for PyTorch overhead + workspace
+    reserved = workload_mem + 0.5
+    mem_tensors = allocate_memory(memory_percent, reserved_gb=reserved)
+    info = get_gpu_info()
+    print(f"  Total allocated: {info['allocated_gb']:.1f} GB / {info['total_gb']:.1f} GB ({info['allocated_gb']/info['total_gb']*100:.0f}%)")
     print()
 
     # Calibrate timing
@@ -201,7 +220,10 @@ def run_load(
     # Cleanup
     print()
     print("Cleaning up...")
-    del a, b, mem_tensor
+    del a, b
+    for t in mem_tensors:
+        del t
+    mem_tensors.clear()
     torch.cuda.empty_cache()
 
     elapsed = time.time() - start_time
