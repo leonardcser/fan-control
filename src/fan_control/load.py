@@ -87,6 +87,7 @@ class GPULoadController(LoadController):
         """
         self.stop()
 
+        flags = flags.strip()
         if not flags:
             return True
 
@@ -132,6 +133,7 @@ class CPULoadController(LoadController):
         """
         self.stop()
 
+        flags = flags.strip()
         if not flags:
             return True
 

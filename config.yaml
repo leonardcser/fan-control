@@ -42,32 +42,32 @@ data_collection:
   #       gpu_load accepts 'gpu-burn' flags (e.g. '-m 50%' or '-tc')
   #       Empty string "" means idle/off.
   load_levels:
-    - cpu_load: ""
-      gpu_load: ""
-      description: "Idle"
-    
+    # - cpu_load: ""
+    #   gpu_load: ""
+    #   description: "Idle"
+
     # CPU focused loads (assuming 24 cores)
     - cpu_load: "--cpu 6"
       gpu_load: ""
       description: "CPU Heat Max (6 cores)"
-    - cpu_load: "--cpu 24"
-      gpu_load: ""
-      description: "CPU Full Load (24 cores)"
-      
+    # - cpu_load: "--cpu 24"
+    #   gpu_load: ""
+    #   description: "CPU Full Load (24 cores)"
+
     # GPU focused loads
     - cpu_load: ""
-      gpu_load: "-m 50%"
+      gpu_load: "-d -m 50%"
       description: "GPU Moderate Load"
-    - cpu_load: ""
-      gpu_load: " " # Space to run default full burn
-      description: "GPU Full Load"
+    # - cpu_load: ""
+    #   gpu_load: " "
+    #   description: "GPU Full Load"
 
     # Mixed loads
-    - cpu_load: "--cpu 12"
-      gpu_load: "-m 50%"
-      description: "Mixed Moderate"
-    - cpu_load: "--cpu 24"
-      gpu_load: " "
+    # - cpu_load: "--cpu 12"
+    #   gpu_load: "-m 50%"
+    #   description: "Mixed Moderate"
+    - cpu_load: "--cpu 6"
+      gpu_load: "-m 90%"
       description: "Full System Load"
 
   # Measurement parameters
@@ -165,28 +165,28 @@ model:
   # CPU R~0.38 => R_serial~0.30 + 1/G~0.08 (G~12.5)
   # GPU R~0.13 => R_serial~0.10 + 1/G~0.03 (G~33.0)
   initial_guesses:
-    R_base_cpu: 0.30      # Irreducible resistance
-    k_pump: 5.0           # Pump conductance contrib
-    k_rad_fan: 5.0        # Rad fan conductance contrib
-    k_intake: 2.0         # Intake conductance contrib
-    k_exhaust: 2.0        # Exhaust conductance contrib
-    R_min: 10.0           # G_base (Baseline Conductance)
+    R_base_cpu: 0.30 # Irreducible resistance
+    k_pump: 5.0 # Pump conductance contrib
+    k_rad_fan: 5.0 # Rad fan conductance contrib
+    k_intake: 2.0 # Intake conductance contrib
+    k_exhaust: 2.0 # Exhaust conductance contrib
+    R_min: 10.0 # G_base (Baseline Conductance)
 
-    R_base_gpu: 0.10      # Irreducible resistance
-    k_gpu_intake: 10.0    # Intake conductance contrib
-    k_gpu_exhaust: 10.0   # Exhaust conductance contrib
-    R_gpu_min: 30.0       # G_base (Baseline Conductance)
+    R_base_gpu: 0.10 # Irreducible resistance
+    k_gpu_intake: 10.0 # Intake conductance contrib
+    k_gpu_exhaust: 10.0 # Exhaust conductance contrib
+    R_gpu_min: 30.0 # G_base (Baseline Conductance)
 
   # Parameter bounds - appropriate for Conductance Model
   bounds:
-    R_base_cpu: [0.10, 0.40]      # R_serial must be < Total R (~0.4)
-    k_pump: [0, 50.0]             # Conductance gain
+    R_base_cpu: [0.10, 0.40] # R_serial must be < Total R (~0.4)
+    k_pump: [0, 50.0] # Conductance gain
     k_rad_fan: [0, 50.0]
     k_intake: [0, 50.0]
     k_exhaust: [0, 50.0]
-    R_min: [1.0, 100.0]           # G_base (Conductance)
+    R_min: [1.0, 100.0] # G_base (Conductance)
 
-    R_base_gpu: [0.05, 0.15]      # R_serial must be < Total R (~0.13)
+    R_base_gpu: [0.05, 0.15] # R_serial must be < Total R (~0.13)
     k_gpu_intake: [0, 100.0]
     k_gpu_exhaust: [0, 100.0]
-    R_gpu_min: [10.0, 200.0]      # G_base (Conductance)
+    R_gpu_min: [10.0, 200.0] # G_base (Conductance)
