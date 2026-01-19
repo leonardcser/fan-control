@@ -1,5 +1,5 @@
 """
-CLI interface for validation/simulation.
+CLI interface for simulation mode.
 """
 
 import sys
@@ -9,12 +9,12 @@ from pathlib import Path
 from .simulator import run_simulation
 
 
-def validate_mode(args) -> None:
+def simulate_mode(args) -> None:
     """
-    Validation mode - run simulation using trained model.
+    Run simulation using trained model on synthetic thermal scenarios.
     """
     print("\n" + "=" * 70)
-    print("CONTROLLER SIMULATION / VALIDATION")
+    print("CONTROLLER SIMULATION")
     print("=" * 70 + "\n")
 
     # Load Config
@@ -30,7 +30,7 @@ def validate_mode(args) -> None:
         print(f"✗ Error parsing config file: {e}")
         sys.exit(1)
 
-    # Validate Run Directory
+    # Check Run Directory
     run_dir = Path(args.run)
     if not run_dir.exists():
         print(f"✗ Run directory not found: {run_dir}")
@@ -44,7 +44,7 @@ def validate_mode(args) -> None:
         sys.exit(1)
 
     # Output Directory
-    output_dir = run_dir / "validate"
+    output_dir = run_dir / "simulate"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Config: {config_path}")
@@ -53,7 +53,7 @@ def validate_mode(args) -> None:
 
     try:
         run_simulation(model_path, config, output_dir)
-        print("\n✓ Validation simulation complete!")
+        print("\n✓ Simulation complete!")
     except Exception as e:
         print(f"\n✗ Simulation failed: {e}")
         import traceback

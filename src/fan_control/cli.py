@@ -9,7 +9,7 @@ from .fit.cli import fit_mode
 from .plot.cli import plot_mode
 from .control.cli import run_mode
 from .control.cool import cool_mode
-from .validate.cli import validate_mode
+from .simulate.cli import simulate_mode
 
 
 def main() -> None:
@@ -26,8 +26,8 @@ Example usage:
   # Fit thermal model from collected data
   fan-control fit --config config.yaml --run data/fan_control_20260119_040722
 
-  # Validate/Simulate controller behavior
-  fan-control validate --config config.yaml --run data/fan_control_20260119_040722
+  # Simulate controller behavior
+  fan-control simulate --config config.yaml --run data/fan_control_20260119_040722
 
   # Run the optimized fan controller
   sudo fan-control run --config config.yaml --run data/fan_control_20260119_040722
@@ -107,17 +107,17 @@ Example usage:
         help="Path to configuration YAML file (default: config.yaml)",
     )
 
-    # Validate subcommand
-    validate_parser = subparsers.add_parser(
-        "validate",
+    # Simulate subcommand
+    simulate_parser = subparsers.add_parser(
+        "simulate",
         help="Simulate controller behavior on synthetic data",
     )
-    validate_parser.add_argument(
+    simulate_parser.add_argument(
         "--config",
         default="config.yaml",
         help="Path to configuration YAML file (default: config.yaml)",
     )
-    validate_parser.add_argument(
+    simulate_parser.add_argument(
         "--run",
         required=True,
         help="Path to run directory containing the trained model",
@@ -135,8 +135,8 @@ Example usage:
         run_mode(args)
     elif args.command == "cool":
         cool_mode(args)
-    elif args.command == "validate":
-        validate_mode(args)
+    elif args.command == "simulate":
+        simulate_mode(args)
 
 
 if __name__ == "__main__":
