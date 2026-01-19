@@ -149,32 +149,51 @@ def run_load(
     print(f"  Total allocated: {info['allocated_gb']:.1f} GB / {info['total_gb']:.1f} GB ({info['allocated_gb']/info['total_gb']*100:.0f}%)")
     print()
 
-    # Calibrate timing
-    # Run a burst and measure time to calibrate duty cycle
+    # Calibrate timing with multiple warmup runs
     print("Calibrating...")
-    torch.cuda.synchronize()
-    t0 = time.perf_counter()
-    run_compute_burst(a, b, iterations=5)
-    burst_time = time.perf_counter() - t0
-    print(f"  Burst time (5 iters): {burst_time*1000:.1f}ms")
+    # Warmup runs
+    for _ in range(3):
+        run_compute_burst(a, b, iterations=5)
 
-    # Calculate duty cycle
-    # load_percent = burst_time / (burst_time + sleep_time) * 100
-    # sleep_time = burst_time * (100 / load_percent - 1)
+    # Measure actual burst time (average of 5 measurements)
+    burst_times = []
+    for _ in range(5):
+        torch.cuda.synchronize()
+        t0 = time.perf_counter()
+        run_compute_burst(a, b, iterations=1)
+        burst_times.append(time.perf_counter() - t0)
+
+    burst_time = sum(burst_times) / len(burst_times)
+    print(f"  Single iteration time: {burst_time*1000:.2f}ms")
+
+    # Calculate iterations and sleep for target load
+    # We want: load = compute_time / (compute_time + sleep_time)
+    # Rearranging: sleep_time = compute_time * (1/load - 1)
+    #
+    # Strategy: Use fixed sleep quantum, vary iterations to hit target
+    sleep_quantum = 0.010  # 10ms sleep chunks
+
     if load_percent >= 99:
         sleep_time = 0
-        iterations_per_burst = 50  # Continuous compute
-    elif load_percent <= 1:
-        sleep_time = 1.0
+        iterations_per_burst = 20
+    elif load_percent <= 5:
+        sleep_time = 0.1
         iterations_per_burst = 1
     else:
-        iterations_per_burst = 5
-        burst_time_est = burst_time  # 5 iterations
-        sleep_time = burst_time_est * (100 / load_percent - 1)
-        sleep_time = max(0.001, min(sleep_time, 1.0))  # Clamp
+        # Target: iters * burst_time / (iters * burst_time + sleep) = load/100
+        # Solve for iters: iters = sleep * load / (burst_time * (100 - load))
+        target_ratio = load_percent / 100
+        # Use sleep_quantum and solve for iterations
+        iterations_per_burst = int(
+            sleep_quantum * target_ratio / (burst_time * (1 - target_ratio))
+        )
+        iterations_per_burst = max(1, min(iterations_per_burst, 100))
+        sleep_time = sleep_quantum
 
-    print(f"  Sleep time: {sleep_time*1000:.1f}ms")
+    expected_load = (iterations_per_burst * burst_time) / (iterations_per_burst * burst_time + sleep_time) * 100
     print(f"  Iterations per burst: {iterations_per_burst}")
+    print(f"  Sleep time: {sleep_time*1000:.1f}ms")
+    print(f"  Expected load: {expected_load:.1f}%")
     print()
 
     print("Running... (Ctrl+C to stop)")
@@ -182,8 +201,6 @@ def run_load(
 
     start_time = time.time()
     last_report = start_time
-    total_compute_time = 0
-    total_sleep_time = 0
 
     try:
         while running:
@@ -193,26 +210,18 @@ def run_load(
                 break
 
             # Compute burst
-            t0 = time.perf_counter()
             run_compute_burst(a, b, iterations=iterations_per_burst)
-            compute_time = time.perf_counter() - t0
-            total_compute_time += compute_time
 
             # Sleep
             if sleep_time > 0:
                 time.sleep(sleep_time)
-                total_sleep_time += sleep_time
 
             # Report
-            if time.time() - last_report >= report_interval:
-                actual_load = total_compute_time / (total_compute_time + total_sleep_time) * 100
+            now = time.time()
+            if now - last_report >= report_interval:
                 info = get_gpu_info()
-                print(
-                    f"  Elapsed: {elapsed:.0f}s | "
-                    f"Actual Load: {actual_load:.1f}% | "
-                    f"Memory: {info['allocated_gb']:.1f} GB"
-                )
-                last_report = time.time()
+                print(f"  Elapsed: {elapsed:.0f}s | Mem: {info['allocated_gb']:.1f} GB")
+                last_report = now
 
     except KeyboardInterrupt:
         pass
@@ -227,11 +236,7 @@ def run_load(
     torch.cuda.empty_cache()
 
     elapsed = time.time() - start_time
-    if total_compute_time + total_sleep_time > 0:
-        actual_load = total_compute_time / (total_compute_time + total_sleep_time) * 100
-    else:
-        actual_load = 0
-    print(f"Done. Ran for {elapsed:.1f}s at ~{actual_load:.1f}% load")
+    print(f"Done. Ran for {elapsed:.1f}s")
 
 
 def sweep_loads(memory_percent: float = 30, step_duration: float = 30):
