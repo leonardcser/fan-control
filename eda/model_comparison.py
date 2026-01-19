@@ -14,6 +14,7 @@ Focus on CPU only. Goal is to learn meaningful fan effects, not just power relat
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import yaml
 from pathlib import Path
 from sklearn.ensemble import HistGradientBoostingRegressor, GradientBoostingRegressor
 from sklearn.linear_model import Ridge
@@ -28,21 +29,40 @@ warnings.filterwarnings("ignore")
 DATA_PATH = Path("data/fan_control_20260119_181120/fan_control_20260119_181120.csv")
 OUTPUT_DIR = Path("eda/model_comparison_results")
 OUTPUT_DIR.mkdir(exist_ok=True)
+CONFIG_PATH = Path("config.yaml")
 
-FEATURES = ["P_cpu", "T_amb", "pwm2", "pwm4", "pwm5", "pwm7"]
-FAN_FEATURES = ["pwm2", "pwm4", "pwm5", "pwm7"]
+# Load config to get device information
+with open(CONFIG_PATH) as f:
+    CONFIG = yaml.safe_load(f)
+
+# Will be set after loading data
+FEATURES = None
+FAN_FEATURES = None
+DEVICE_CONFIG = None
 
 
 def load_and_preprocess(path: Path) -> pd.DataFrame:
     """Load data and preprocess."""
+    global FEATURES, FAN_FEATURES, DEVICE_CONFIG
+
     df = pd.read_csv(path)
+
+    # Get fan PWMs from config that are enabled and exist in data
+    enabled_devices = {k: v for k, v in CONFIG["devices"].items()}
+    FAN_FEATURES = [k for k in enabled_devices.keys() if k in df.columns]
+    FEATURES = ["P_cpu", "T_amb"] + FAN_FEATURES
+    DEVICE_CONFIG = enabled_devices
+
+    print(f"Available features: {FEATURES}")
+    print(f"Available fans: {FAN_FEATURES}")
 
     # Filter valid data
     df = df[df["P_cpu"] > 10.0].copy()
 
     # Normalize PWM to 0-100
     for col in FAN_FEATURES:
-        df[col] = df[col] / 2.55
+        if col in df.columns:
+            df[col] = df[col] / 2.55
 
     # Filter thermal saturation
     df = df[df["T_cpu"] < 90.0]
@@ -64,8 +84,11 @@ def evaluate_model(y_true, y_pred, name: str) -> dict:
 
 def test_fan_sensitivity(predict_fn, base_state: dict, fan_name: str) -> float:
     """Test how much temperature changes when varying a single fan."""
+    # Get minimum from config
+    fan_min = DEVICE_CONFIG[fan_name]["min_pwm"] if fan_name in DEVICE_CONFIG else 0
+
     low = base_state.copy()
-    low[fan_name] = 20 if fan_name != "pwm7" else 40  # Use realistic minimums
+    low[fan_name] = fan_min
 
     high = base_state.copy()
     high[fan_name] = 100
@@ -328,8 +351,11 @@ class TwoStageModel:
         delta_T = T_baseline_pred - df["T_cpu"].values
 
         # Delta should increase with fan speed (more cooling)
+        # Create monotonic constraints for however many fans we have
+        fan_constraints = [1] * len(FAN_FEATURES)
+
         self.delta_model = HistGradientBoostingRegressor(
-            monotonic_cst=[1, 1, 1, 1],  # All fans should increase cooling (positive delta)
+            monotonic_cst=fan_constraints,
             max_iter=100,
             learning_rate=0.1,
             max_depth=3,
@@ -377,7 +403,7 @@ class ResistanceGBM:
         y = df["R_thermal"]
 
         # All fans should decrease resistance
-        constraints = [-1, -1, -1, -1]
+        constraints = [-1] * len(FAN_FEATURES)
 
         self.model = HistGradientBoostingRegressor(
             monotonic_cst=constraints,
@@ -438,18 +464,26 @@ def plot_predictions(models: dict, df_test: pd.DataFrame, output_dir: Path):
 
 def plot_fan_sensitivity(models: dict, output_dir: Path):
     """Plot temperature response to each fan for all models."""
-    # Base state for testing
-    base_state = {"P_cpu": 100, "T_amb": 25, "pwm2": 50, "pwm4": 30, "pwm5": 30, "pwm7": 60}
+    # Base state for testing - use middle of range for each fan
+    base_state = {"P_cpu": 100, "T_amb": 25}
+    for fan in FAN_FEATURES:
+        levels = CONFIG["data_collection"].get(f"{fan}_levels", [0, 100])
+        base_state[fan] = (min(levels) + max(levels)) / 2
 
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-    axes = axes.flatten()
+    # Get fan ranges from config data_collection levels
+    fan_ranges = {}
+    for fan in FAN_FEATURES:
+        levels = CONFIG["data_collection"].get(f"{fan}_levels", [0, 100])
+        fan_ranges[fan] = (min(levels), max(levels))
 
-    fan_ranges = {
-        "pwm2": (20, 100),
-        "pwm4": (0, 80),
-        "pwm5": (0, 100),
-        "pwm7": (40, 100),
-    }
+    n_plots = len(fan_ranges)
+    n_cols = min(2, n_plots)
+    n_rows = (n_plots + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(12, 5 * n_rows))
+    if n_plots == 1:
+        axes = [axes]
+    else:
+        axes = axes.flatten()
 
     for idx, (fan, (fan_min, fan_max)) in enumerate(fan_ranges.items()):
         ax = axes[idx]
@@ -481,9 +515,12 @@ def plot_power_response(models: dict, output_dir: Path):
 
     power_values = np.linspace(30, 130, 50)
 
-    # Config 1: All fans at minimum
+    # Config 1: All fans at minimum - use min_pwm from config
     ax = axes[0]
-    min_fans = {"T_amb": 25, "pwm2": 20, "pwm4": 15, "pwm5": 15, "pwm7": 40}
+    min_fans = {"T_amb": 25}
+    for fan in FAN_FEATURES:
+        min_fans[fan] = DEVICE_CONFIG[fan]["min_pwm"]
+
     for name, model in models.items():
         temps = []
         for P in power_values:
@@ -498,9 +535,13 @@ def plot_power_response(models: dict, output_dir: Path):
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
 
-    # Config 2: All fans at maximum
+    # Config 2: All fans at maximum - use max from data_collection levels
     ax = axes[1]
-    max_fans = {"T_amb": 25, "pwm2": 100, "pwm4": 80, "pwm5": 100, "pwm7": 100}
+    max_fans = {"T_amb": 25}
+    for fan in FAN_FEATURES:
+        levels = CONFIG["data_collection"].get(f"{fan}_levels", [100])
+        max_fans[fan] = max(levels)
+
     for name, model in models.items():
         temps = []
         for P in power_values:
@@ -528,8 +569,11 @@ def print_fan_sensitivity_table(models: dict):
     print("FAN SENSITIVITY (ΔT when fan goes from min to max, positive = cooling)")
     print("=" * 80)
 
-    headers = ["Model", "pwm2", "pwm4", "pwm5", "pwm7", "Total"]
-    print(f"{headers[0]:<25} {headers[1]:>8} {headers[2]:>8} {headers[3]:>8} {headers[4]:>8} {headers[5]:>8}")
+    headers = ["Model"] + FAN_FEATURES + ["Total"]
+    header_str = f"{headers[0]:<25}"
+    for h in headers[1:]:
+        header_str += f" {h:>8}"
+    print(header_str)
     print("-" * 80)
 
     for name, model in models.items():
@@ -539,10 +583,11 @@ def print_fan_sensitivity_table(models: dict):
             sensitivities.append(delta)
 
         total = sum(sensitivities)
-        print(
-            f"{name:<25} {sensitivities[0]:>8.2f} {sensitivities[1]:>8.2f} "
-            f"{sensitivities[2]:>8.2f} {sensitivities[3]:>8.2f} {total:>8.2f}"
-        )
+        row_str = f"{name:<25}"
+        for s in sensitivities:
+            row_str += f" {s:>8.2f}"
+        row_str += f" {total:>8.2f}"
+        print(row_str)
 
 
 def main():

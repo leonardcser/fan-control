@@ -20,8 +20,8 @@ class Optimizer:
         self.devices = config["devices"]
 
         # Map device names to optimization indices
-        # We optimize [pwm2, pwm4, pwm5, pwm7]
-        self.pwm_names = ["pwm2", "pwm4", "pwm5", "pwm7"]
+        # Dynamically get enabled devices from config
+        self.pwm_names = list(self.devices.keys())
         self.bounds = self._get_bounds()
 
         # Optimization settings

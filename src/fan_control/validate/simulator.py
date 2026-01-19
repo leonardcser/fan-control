@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+import yaml
 from pathlib import Path
 from typing import Dict, List
 import logging
@@ -10,6 +11,9 @@ from ..control.optimizer import Optimizer
 from ..fit.train import ThermalModel
 
 logger = logging.getLogger(__name__)
+
+# Color palette for consistent fan visualization
+FAN_COLORS = ["blue", "green", "purple", "cyan", "orange", "red", "brown", "pink"]
 
 
 def run_simulation(model_path: Path, config: Dict, output_dir: Path):
@@ -108,6 +112,12 @@ def generate_simulation_plots(df: pd.DataFrame, targets: Dict, output_dir: Path)
     """Plot simulation results."""
     sns.set_theme(style="whitegrid")
 
+    # Generate fan colors and labels dynamically from available PWM columns
+    pwm_cols = sorted([col for col in df.columns if col.startswith("pwm")])
+    fan_colors = {pwm: FAN_COLORS[i % len(FAN_COLORS)] for i, pwm in enumerate(pwm_cols)}
+    fan_labels_short = {pwm: pwm.upper() for pwm in pwm_cols}
+    fan_labels_long = {pwm: f"{pwm.upper()}" for pwm in pwm_cols}
+
     # 1. CPU Focus Plot
     fig, ax1 = plt.subplots(figsize=(12, 6))
 
@@ -134,14 +144,20 @@ def generate_simulation_plots(df: pd.DataFrame, targets: Dict, output_dir: Path)
     ax2.set_ylabel("Fan PWM (0-100)")
     ax2.set_ylim(0, 105)
 
-    # Plot relevant fans for CPU (pwm2=Rad, pwm7=Pump, pwm4=Intake, pwm5=Exhaust)
-    l4 = ax2.plot(
-        df["time"], df["pwm2"], label="Rad Fan (pwm2)", color="blue", alpha=0.7
-    )
-    l5 = ax2.plot(df["time"], df["pwm7"], label="Pump (pwm7)", color="cyan", alpha=0.7)
+    # Plot relevant fans for CPU
+    fan_lines = []
+    # Prioritize certain fans for CPU plot (radiator, pump first if available)
+    cpu_fan_priority = [col for col in pwm_cols if col in df.columns]
+
+    for pwm_name in cpu_fan_priority[:4]:  # Limit to first 4 fans to avoid clutter
+        l = ax2.plot(
+            df["time"], df[pwm_name], label=fan_labels_long[pwm_name],
+            color=fan_colors[pwm_name], alpha=0.7
+        )
+        fan_lines.extend(l)
 
     # Legend
-    lines = l1 + l2 + [l3] + l4 + l5
+    lines = l1 + l2 + [l3] + fan_lines
     labs = [l.get_label() for l in lines]
     ax1.legend(lines, labs, loc="upper left")
 
@@ -178,14 +194,18 @@ def generate_simulation_plots(df: pd.DataFrame, targets: Dict, output_dir: Path)
     ax2.set_ylabel("Fan PWM (0-100)")
     ax2.set_ylim(0, 105)
 
-    l4 = ax2.plot(
-        df["time"], df["pwm4"], label="Intake (pwm4)", color="blue", alpha=0.7
-    )
-    l5 = ax2.plot(
-        df["time"], df["pwm5"], label="Exhaust (pwm5)", color="purple", alpha=0.7
-    )
+    fan_lines = []
+    # Plot available fans for GPU
+    gpu_fan_priority = [col for col in pwm_cols if col in df.columns]
 
-    lines = l1 + l2 + [l3] + l4 + l5
+    for pwm_name in gpu_fan_priority[:4]:  # Limit to first 4 fans to avoid clutter
+        l = ax2.plot(
+            df["time"], df[pwm_name], label=fan_labels_long[pwm_name],
+            color=fan_colors[pwm_name], alpha=0.7
+        )
+        fan_lines.extend(l)
+
+    lines = l1 + l2 + [l3] + fan_lines
     labs = [l.get_label() for l in lines]
     ax1.legend(lines, labs, loc="upper left")
 
@@ -196,10 +216,11 @@ def generate_simulation_plots(df: pd.DataFrame, targets: Dict, output_dir: Path)
 
     # 3. Combined / All Fans
     plt.figure(figsize=(12, 6))
-    plt.plot(df["time"], df["pwm2"], label="Rad Fan")
-    plt.plot(df["time"], df["pwm4"], label="Intake")
-    plt.plot(df["time"], df["pwm5"], label="Exhaust")
-    plt.plot(df["time"], df["pwm7"], label="Pump")
+
+    for pwm_name in pwm_cols:
+        if pwm_name in df.columns:
+            plt.plot(df["time"], df[pwm_name], label=fan_labels_short[pwm_name], color=fan_colors[pwm_name])
+
     plt.ylabel("PWM")
     plt.xlabel("Time")
     plt.title("Simulation: All Fan Curves")

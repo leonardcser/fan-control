@@ -56,19 +56,10 @@ class ThermalModel:
 
     def _engineer_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Minimal feature engineering.
-        GBM finds interactions, but heat density is a strong prior.
+        Feature engineering placeholder.
+        Currently no engineered features - GBM learns interactions directly.
         """
-        df_eng = df.copy()
-
-        # Ensure heat_flux_density exists if needed
-        # We assume raw features like P_cpu, cpu_cores are always present
-        if "cpu_cores" in df.columns and "P_cpu" in df.columns:
-            # Clip cores to 1 to avoid division by zero (e.g. Idle samples)
-            cores = df["cpu_cores"].clip(lower=1)
-            df_eng["heat_flux_density"] = df["P_cpu"] / cores
-
-        return df_eng
+        return df.copy()
 
     def _get_monotonic_constraints(self, feature_names: List[str]) -> List[int]:
         """
@@ -85,15 +76,9 @@ class ThermalModel:
             elif name.startswith("P_"):
                 # Increasing Power -> Increases Temp
                 cst.append(1)
-            elif name == "heat_flux_density":
-                # Higher density (W/core) -> Higher Temp
-                cst.append(1)
             elif name == "T_amb":
                 # Higher Ambient -> Higher Temp
                 cst.append(1)
-            elif name == "cpu_cores":
-                # For fixed Power, more cores = less density = lower temp.
-                cst.append(-1)
             else:
                 cst.append(0)
         return cst
@@ -102,13 +87,8 @@ class ThermalModel:
         """Train Monotonic models for CPU and GPU."""
         df_eng = self._engineer_features(df)
 
-        # Determine features to use
-        # Start with config features
+        # Determine features to use from config
         train_features = list(self.features)
-
-        # NOTE: heat_flux_density intentionally NOT added - it requires cpu_cores
-        # at prediction time, which may not be available. The GBM can learn the
-        # power->temp nonlinearity directly from P_cpu.
 
         # Verify columns exist
         train_features = [f for f in train_features if f in df_eng.columns]
