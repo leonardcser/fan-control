@@ -65,15 +65,31 @@ data_collection:
     - cpu_load: "--cpu 16"
       gpu_load: ""
       description: "CPU (16 cores)"
-    - cpu_load: "--cpu 24"
-      gpu_load: ""
-      description: "CPU (24 cores)"
 
     # GPU focused loads
-    - TODO
+    - cpu_load: ""
+      gpu_load: "--load 5"
+      description: "GPU (5%)"
+    - cpu_load: ""
+      gpu_load: "--load 10"
+      description: "GPU (10%)"
+    - cpu_load: ""
+      gpu_load: "--load 50"
+      description: "GPU (50%)"
+    - cpu_load: ""
+      gpu_load: "--load 60"
+      description: "GPU (60%)"
+    - cpu_load: ""
+      gpu_load: "--load 70"
+      description: "GPU (70%)"
+    - cpu_load: ""
+      gpu_load: "--load 100"
+      description: "GPU (100%)"
 
     # Mixed loads
-    - TODO
+    - cpu_load: "--cpu 4"
+      gpu_load: "--load 100"
+      description: "ML Training"
 
   # Measurement parameters
   equilibration_check_interval: 1 # How often to sample temperature (seconds)
