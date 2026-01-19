@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 from typing import Dict, Tuple, Any, List
+from scipy.optimize import minimize
 
 # HistGradientBoostingRegressor supports monotonic constraints natively
 from sklearn.ensemble import HistGradientBoostingRegressor
@@ -112,11 +113,12 @@ class ThermalModel:
             y_cpu = df_eng[mask]["T_cpu"]
 
             if len(X_cpu) > 0:
+                # Train GBM model
                 self.cpu_model = HistGradientBoostingRegressor(
                     monotonic_cst=cst, **self.hgb_params
                 )
                 self.cpu_model.fit(X_cpu, y_cpu)
-                logger.info(f"CPU model trained on {len(X_cpu)} samples (P_cpu > {min_cpu_power}W)")
+                logger.info(f"CPU GBM model trained on {len(X_cpu)} samples (P_cpu > {min_cpu_power}W)")
             else:
                 logger.warning(f"No CPU training samples available (P_cpu > {min_cpu_power}W). Skipping CPU model.")
 
@@ -128,16 +130,25 @@ class ThermalModel:
             y_gpu = df_eng[mask]["T_gpu"]
 
             if len(X_gpu) > 0:
+                # Train GBM model
                 self.gpu_model = HistGradientBoostingRegressor(
                     monotonic_cst=cst, **self.hgb_params
                 )
                 self.gpu_model.fit(X_gpu, y_gpu)
-                logger.info(f"GPU model trained on {len(X_gpu)} samples (P_gpu > {min_gpu_power}W)")
+                logger.info(f"GPU GBM model trained on {len(X_gpu)} samples (P_gpu > {min_gpu_power}W)")
             else:
                 logger.warning(f"No GPU training samples available (P_gpu > {min_gpu_power}W). Skipping GPU model.")
 
     def predict(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
-        """Predict temperatures."""
+        """
+        Predict temperatures.
+
+        Args:
+            df: Input dataframe
+
+        Returns:
+            Tuple of (cpu_temps, gpu_temps)
+        """
         if self.cpu_model is None and self.gpu_model is None:
             # Return zeros if not trained (or raise error)
             logger.warning("Models not trained, returning zeros")
@@ -248,10 +259,15 @@ def train_model(config: Dict[str, Any], data_path: Path, output_dir: Path):
         raise ValueError(f"No models trained - insufficient data with P_cpu > {min_cpu_power}W or P_gpu > {min_gpu_power}W")
 
     # 4. Validation
-    logger.info("Validating model...")
+    logger.info("Validating models...")
+
+    # Validate GBM models
+    logger.info("Validating models...")
     t_cpu_pred, t_gpu_pred = model.predict(val_df)
 
     metrics = {}
+
+    print("\n=== Validation Results ===")
 
     # CPU Metrics
     if model.cpu_model:
@@ -272,8 +288,6 @@ def train_model(config: Dict[str, Any], data_path: Path, output_dir: Path):
         print(f"GPU: RMSE={rmse_gpu:.2f}°C, R2={r2_gpu:.4f}, MAE={mae_gpu:.2f}°C")
     else:
         logger.info("GPU model not trained (skipped)")
-
-    print("\n=== Validation Results (Monotonic GBM) ===")
 
     # 5. Save Artifacts
     model_path = output_dir / "thermal_model.pkl"
@@ -301,7 +315,7 @@ def plot_validation(
         plt.plot([min_val, max_val], [min_val, max_val], "r--", label="Perfect Fit")
         plt.xlabel("Actual CPU Temp (°C)")
         plt.ylabel("Predicted CPU Temp (°C)")
-        plt.title("CPU Temperature: Predicted vs Actual (Monotonic GBM)")
+        plt.title("CPU Temperature: Predicted vs Actual")
         plt.legend()
         plt.savefig(output_dir / "val_cpu_pred_vs_actual.png")
         plt.close()
@@ -315,7 +329,7 @@ def plot_validation(
         plt.plot([min_val, max_val], [min_val, max_val], "r--", label="Perfect Fit")
         plt.xlabel("Actual GPU Temp (°C)")
         plt.ylabel("Predicted GPU Temp (°C)")
-        plt.title("GPU Temperature: Predicted vs Actual (Monotonic GBM)")
+        plt.title("GPU Temperature: Predicted vs Actual")
         plt.legend()
         plt.savefig(output_dir / "val_gpu_pred_vs_actual.png")
         plt.close()

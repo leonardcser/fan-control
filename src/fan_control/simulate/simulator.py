@@ -20,6 +20,7 @@ def run_simulation(model_path: Path, config: Dict, output_dir: Path):
     """
     Run a simulation of the optimizer against increasing loads.
     """
+    # Create optimizer
     optimizer = Optimizer(model_path, config)
 
     # Define Targets
@@ -75,6 +76,7 @@ def run_simulation(model_path: Path, config: Dict, output_dir: Path):
         t_start = time_module.perf_counter()
         pwms = optimizer.optimize(state, targets, initial_guess=last_pwms)
         t_end = time_module.perf_counter()
+        opt_time = (t_end - t_start) * 1000.0
 
         # Update state for next iteration
         last_pwms = {k: float(v) for k, v in pwms.items()}
@@ -83,8 +85,6 @@ def run_simulation(model_path: Path, config: Dict, output_dir: Path):
         full_input = state.copy()
         full_input.update(pwms)
         input_df = pd.DataFrame([full_input])
-
-        # Feature engineering inside predict
         t_cpu_pred, t_gpu_pred = optimizer.model.predict(input_df)
 
         res = {
@@ -93,7 +93,7 @@ def run_simulation(model_path: Path, config: Dict, output_dir: Path):
             "P_gpu": state["P_gpu"],
             "T_pred_cpu": t_cpu_pred[0],
             "T_pred_gpu": t_gpu_pred[0],
-            "opt_time_ms": (t_end - t_start) * 1000.0,
+            "opt_time_ms": opt_time,
             **pwms,
         }
         results.append(res)
@@ -134,7 +134,7 @@ def generate_simulation_plots(df: pd.DataFrame, targets: Dict, output_dir: Path)
     l2 = ax1.plot(
         df["time"],
         df["T_pred_cpu"],
-        label="Predicted CPU Temp",
+        label="CPU Temp",
         color="red",
         linewidth=2,
     )
@@ -149,20 +149,19 @@ def generate_simulation_plots(df: pd.DataFrame, targets: Dict, output_dir: Path)
 
     # Plot relevant fans for CPU
     fan_lines = []
-    # Prioritize certain fans for CPU plot (radiator, pump first if available)
     cpu_fan_priority = [col for col in pwm_cols if col in df.columns]
 
     for pwm_name in cpu_fan_priority[:4]:  # Limit to first 4 fans to avoid clutter
         l = ax2.plot(
-            df["time"], df[pwm_name], label=fan_labels_long[pwm_name],
-            color=fan_colors[pwm_name], alpha=0.7
+            df["time"], df[pwm_name], label=f"{fan_labels_long[pwm_name]}",
+            color=fan_colors[pwm_name], alpha=0.7, linewidth=1.5
         )
         fan_lines.extend(l)
 
     # Legend
     lines = l1 + l2 + [l3] + fan_lines
     labs = [l.get_label() for l in lines]
-    ax1.legend(lines, labs, loc="upper left")
+    ax1.legend(lines, labs, loc="upper left", fontsize=8)
 
     plt.title("Simulation: CPU Thermal Response")
     plt.tight_layout()
@@ -181,7 +180,7 @@ def generate_simulation_plots(df: pd.DataFrame, targets: Dict, output_dir: Path)
     l2 = ax1.plot(
         df["time"],
         df["T_pred_gpu"],
-        label="Predicted GPU Temp",
+        label="GPU Temp",
         color="darkgreen",
         linewidth=2,
     )
@@ -198,19 +197,18 @@ def generate_simulation_plots(df: pd.DataFrame, targets: Dict, output_dir: Path)
     ax2.set_ylim(0, 105)
 
     fan_lines = []
-    # Plot available fans for GPU
     gpu_fan_priority = [col for col in pwm_cols if col in df.columns]
 
     for pwm_name in gpu_fan_priority[:4]:  # Limit to first 4 fans to avoid clutter
         l = ax2.plot(
-            df["time"], df[pwm_name], label=fan_labels_long[pwm_name],
-            color=fan_colors[pwm_name], alpha=0.7
+            df["time"], df[pwm_name], label=f"{fan_labels_long[pwm_name]}",
+            color=fan_colors[pwm_name], alpha=0.7, linewidth=1.5
         )
         fan_lines.extend(l)
 
     lines = l1 + l2 + [l3] + fan_lines
     labs = [l.get_label() for l in lines]
-    ax1.legend(lines, labs, loc="upper left")
+    ax1.legend(lines, labs, loc="upper left", fontsize=8)
 
     plt.title("Simulation: GPU Thermal Response")
     plt.tight_layout()
@@ -222,19 +220,20 @@ def generate_simulation_plots(df: pd.DataFrame, targets: Dict, output_dir: Path)
 
     for pwm_name in pwm_cols:
         if pwm_name in df.columns:
-            plt.plot(df["time"], df[pwm_name], label=fan_labels_short[pwm_name], color=fan_colors[pwm_name])
+            plt.plot(df["time"], df[pwm_name], label=f"{fan_labels_short[pwm_name]}",
+                    color=fan_colors[pwm_name], linewidth=1.5)
 
     plt.ylabel("PWM")
     plt.xlabel("Time")
     plt.title("Simulation: All Fan Curves")
-    plt.legend()
+    plt.legend(fontsize=8)
     plt.tight_layout()
     plt.savefig(output_dir / "sim_all_fans.png")
     plt.close()
 
     # 4. Timing Plot
     plt.figure(figsize=(12, 4))
-    plt.plot(df["time"], df["opt_time_ms"], color="purple", label="Optimization Time")
+    plt.plot(df["time"], df["opt_time_ms"], color="purple", label="Optimization Time", linewidth=1.5)
     plt.ylabel("Time (ms)")
     plt.xlabel("Time Step")
     plt.title("Controller Latency Analysis")
@@ -253,7 +252,7 @@ def generate_model_analysis_plots(model: ThermalModel, config: Dict, output_dir:
     Generate analysis plots to understand what the model has learned.
     Includes PWM impact, partial dependence, and fan efficiency plots.
     """
-    print("\nGenerating model analysis plots...")
+    print(f"\nGenerating model analysis plots...")
 
     # Plot 1: PWM Impact
     plot_pwm_impact(model, config, output_dir)
@@ -345,7 +344,7 @@ def plot_pwm_impact(model: ThermalModel, config: Dict, output_dir: Path):
     plt.savefig(output_dir / "model_pwm_impact.png", dpi=150)
     plt.close()
 
-    print("✓ PWM Impact plot generated")
+    print(f"✓ PWM Impact plot generated")
 
 
 def plot_partial_dependence(model: ThermalModel, config: Dict, output_dir: Path):
@@ -427,7 +426,7 @@ def plot_partial_dependence(model: ThermalModel, config: Dict, output_dir: Path)
     plt.savefig(output_dir / "model_partial_dependence.png", dpi=150)
     plt.close()
 
-    print("✓ Partial Dependence plots generated")
+    print(f"✓ Partial Dependence plots generated")
 
 
 def plot_fan_efficiency(model: ThermalModel, config: Dict, output_dir: Path):
@@ -513,4 +512,4 @@ def plot_fan_efficiency(model: ThermalModel, config: Dict, output_dir: Path):
     plt.savefig(output_dir / "model_fan_efficiency.png", dpi=150)
     plt.close()
 
-    print("✓ Fan Efficiency comparison generated")
+    print(f"✓ Fan Efficiency comparison generated")

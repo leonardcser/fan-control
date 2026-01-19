@@ -91,55 +91,51 @@ Power draw is critical because optimal fan speeds depend on workload - the same 
 ## Model Equations
 
 ```
-T_cpu = T_amb + P_cpu × (R_base_cpu_0 - k_pump·pwm7 + 1 / (a·pwm2·(1 + h·pwm7) + b·pwm4 + c·pwm5 + d))
-
-T_gpu = T_amb + P_gpu × (R_base_gpu + 1 / (e·pwm4 + f·pwm5 + g))
+T_cpu = T_amb + offset_cpu + P_cpu × R_eff_cpu(fans)
+T_gpu = T_amb + offset_gpu + P_gpu × R_eff_gpu(fans)
 ```
 
-### CPU Cooling Model Details
+Where the effective thermal resistance is:
 
-The pump (pwm7) affects CPU cooling through two mechanisms:
+```
+R_eff = R_base / (1 + sum(a_i × sqrt(pwm_i + 1)) / scale)
+```
 
-1. **Base Resistance Reduction**: Higher pump speed improves coolant circulation, reducing inherent thermal resistance
-   ```
-   R_base_cpu(pwm7) = R_base_cpu_0 - k_pump·pwm7
-   ```
-
-2. **Radiator Fan Coupling**: Higher pump speed delivers more hot coolant to the radiator, making the radiator fan (pwm2) more effective
-   ```
-   effective_radiator_conductance = a·pwm2·(1 + h·pwm7)
-   ```
+The sqrt function captures **diminishing returns** - fans are most effective at low speeds, with decreasing benefit at high speeds. This is physically realistic for convective cooling.
 
 ### Parameters to Fit
 
-| Parameter | Physical Meaning |
-|-----------|------------------|
-| `R_base_cpu_0` | Fixed thermal resistance without pump effect (waterblock, tubing interface) |
-| `k_pump` | Pump speed contribution to reducing base resistance (coolant circulation effectiveness) |
-| `R_base_gpu` | Fixed thermal resistance (GPU die to heatsink interface) |
-| `a` | pwm2 base contribution to CPU cooling (radiator fan effectiveness) |
-| `h` | Pump modulation of radiator fan effectiveness (coolant delivery to radiator) |
-| `b` | pwm4 contribution to CPU cooling (bottom intake → fresher air reaches radiator) |
-| `c` | pwm5 contribution to CPU cooling (case airflow circulation) |
-| `d` | Baseline CPU convection (passive cooling) |
-| `e` | pwm4 contribution to GPU cooling (direct airflow from below GPU) |
-| `f` | pwm5 contribution to GPU cooling (general case airflow) |
-| `g` | Baseline GPU convection (passive cooling) |
+**Per-target (CPU and GPU):**
 
-**Total: 11 parameters**
+| Parameter | Physical Meaning | Notes |
+|-----------|------------------|-------|
+| `offset` | Baseline temperature offset | Accounts for idle power, measurement bias, thermal resistance at zero airflow |
+| `R_base` | Base thermal resistance without fan cooling | Typical values 0.5-1.0 °C/W for air cooling |
+| `a_pwm2` | pwm2 fan cooling effectiveness (if present) | Coefficient for radiator fan (CPU) or primary cooler |
+| `a_pwm4` | pwm4 fan cooling effectiveness (if present) | Coefficient for intake fans |
+| `a_pwm5` | pwm5 fan cooling effectiveness (if present) | Coefficient for case exhaust fans |
+| `scale` | Fan effect scaling parameter | Fixed at 10 for all models |
+
+**Total: 2 + N_fans parameters per target** (e.g., 5 parameters for 3 fans)
 
 ## Understanding the Physical Limits
 
 The physics model reveals the absolute best temperatures achievable (fans at infinite speed):
 
 ```
-T_cpu_min = T_amb + P_cpu × (R_base_cpu_0 - k_pump·pwm7)
-T_gpu_min = T_amb + P_gpu × R_base_gpu
+T_cpu_min = T_amb + offset_cpu + P_cpu × R_base_cpu
+T_gpu_min = T_amb + offset_gpu + P_gpu × R_base_gpu
 ```
 
-As fans spin faster, the conductance term `1/(a·pwm + b·pwm + ...)` becomes negligible compared to `R_base`. These are the theoretical minimum temperatures - you can't cool below this without changing hardware (better radiator, waterblock, thermal paste, etc.). For CPU, the pump speed also affects the minimum achievable temperature by improving coolant circulation.
+As fans spin faster, the resistance decreases via the `R_base / (1 + fan_effect)` term. At infinite fan speeds, the denominator approaches infinity, making the resistance approach zero. The minimum temperature is limited by:
+- Base thermal resistance (`R_base`) - a hardware property
+- Ambient temperature (`T_amb`)
+- Power draw (`P`)
+- Offset term (accounts for unmodeled losses)
 
-Beyond a certain fan speed, further increases provide diminishing returns. The optimal strategy is to find the **minimum fan speeds that achieve your temperature targets** - this naturally avoids wasted effort.
+These are the theoretical minimum temperatures. You can't cool below this without changing hardware (better radiator, waterblock, thermal paste, etc.).
+
+The `sqrt(pwm + 1)` term naturally captures **diminishing returns** - the marginal cooling benefit decreases at high fan speeds. The optimal strategy is to find the **minimum fan speeds that achieve your temperature targets** - this naturally avoids wasted effort.
 
 ## Solution Approach
 
@@ -147,17 +143,17 @@ Beyond a certain fan speed, further increases provide diminishing returns. The o
 
 **Given:** Current conditions (P_cpu, P_gpu, T_amb) and temperature targets (T_target_cpu, T_target_gpu)
 
-**Find:** Minimal fan and pump speeds (pwm2, pwm4, pwm5, pwm7) that achieve the targets
+**Find:** Minimal fan speeds (pwm2, pwm4, pwm5) that achieve the targets
 
 ### Optimization Formulation
 
 This is a standard constrained nonlinear optimization problem:
 
 ```
-minimize: w2·pwm2 + w4·pwm4 + w5·pwm5 + w7·pwm7
+minimize: w2·pwm2 + w4·pwm4 + w5·pwm5
 
 subject to:
-  - T_cpu(pwm2, pwm4, pwm5, pwm7, P_cpu, T_amb) ≤ T_target_cpu
+  - T_cpu(pwm2, pwm4, pwm5, P_cpu, T_amb) ≤ T_target_cpu
   - T_gpu(pwm4, pwm5, P_gpu, T_amb) ≤ T_target_gpu
   - pwm_i ∈ [min_speed_i, max_speed_i]
 ```
@@ -168,16 +164,20 @@ subject to:
 - `T_target_cpu`, `T_target_gpu` - Desired temperature targets (usually current temps, or user-set limits)
 
 **Variables to solve for:**
-- `pwm2`, `pwm4`, `pwm5`, `pwm7` - Optimal fan and pump speeds
+- `pwm2`, `pwm4`, `pwm5` - Optimal fan speeds
 
 **Parameters (fitted once during calibration):**
-- `R_base_cpu_0`, `k_pump`, `R_base_gpu`, `a`, `h`, `b`, `c`, `d`, `e`, `f`, `g` - Thermal model parameters (11 total)
+- `offset_cpu`, `offset_gpu` - Baseline temperature offsets (per-target)
+- `R_base_cpu`, `R_base_gpu` - Base thermal resistances (per-target)
+- `a_pwm2_cpu`, `a_pwm4_cpu`, `a_pwm5_cpu` - Fan effectiveness coefficients for CPU
+- `a_pwm4_gpu`, `a_pwm5_gpu` - Fan effectiveness coefficients for GPU
+- **Total: 2 + (N_fans per target) parameters, typically 10-11 total**
 
 **Where:**
-- Weights `w2, w4, w5, w7` can be:
+- Weights `w2, w4, w5` can be:
   - All equal (minimize total device speed)
   - Proportional to noise levels (minimize total noise)
-  - Proportional to number of fans (pwm4 and pwm5 have 3 fans each, pwm2 and pwm7 have 1 each)
+  - Proportional to number of fans (pwm4 and pwm5 have 3 fans each, pwm2 has 1)
 
 **Solution method:** Use scipy.optimize.minimize with SLSQP or trust-constr solver. The temperature functions are smooth, continuous, and differentiable - ideal for gradient-based optimization.
 
@@ -190,20 +190,24 @@ By minimizing fan speeds while meeting temperature constraints, we automatically
 
 The physics model naturally captures diminishing returns through the `1/conductance` term - the solver will find the sweet spot.
 
-### Multi-Fan Coupling
+### Fan Effects Model
 
-The conductance model includes both linear fan contributions and pump-radiator coupling:
+The fan effect is computed as:
 ```
-conductance_cpu = a·pwm2·(1 + h·pwm7) + b·pwm4 + c·pwm5 + d
+fan_effect = sum(a_i × sqrt(pwm_i + 1) for all fans i)
 ```
 
-The pump-radiator coupling term `a·pwm2·(1 + h·pwm7)` captures the interaction between pump speed and radiator fan effectiveness. Other fan contributions (pwm4, pwm5) are assumed independent.
+Each fan contributes independently to the total cooling effectiveness. The sqrt term captures:
+- **Diminishing returns**: Fans are most effective at low speeds
+- **Continuous smooth function**: Gradient-based optimization works well
+- **Realistic physics**: Convective heat transfer coefficient increases with velocity^0.5
 
-This is still a simplification - in reality:
-- Case fans may interact at high speeds
+This assumes fans contribute independently to the cooling effect. In reality:
+- Case fans may interact at very high speeds
 - Airflow patterns may change with fan combinations
+- Pump circulation (if water-cooled) may couple with radiator fan effectiveness
 
-**If needed later:** Enhance with additional interaction terms like `j·pwm2·pwm4` or use nonlinear functions. Start with the current model - pump-radiator coupling is the primary interaction.
+**If needed later:** Enhance with additional interaction terms or higher-order models. Start with the current independent model - it's simple, interpretable, and typically sufficient for optimization.
 
 ### Handling Fans That Can Turn Off
 
@@ -265,42 +269,42 @@ Each row represents one steady-state measurement (after thermal equilibrium):
 
 ### Collection Strategy
 
-Vary fan speeds, pump speed, and loads to capture the full range of operating conditions:
+Vary fan speeds and loads to capture the full range of operating conditions:
 
 - **Fan speeds**: Test at multiple levels (e.g., 30%, 50%, 70%, 100%) for each fan
-- **Pump speed (pwm7)**: Test at multiple levels (e.g., 25%, 50%, 75%, 100%) to capture pump-radiator coupling
 - **Load levels**: Vary power draw (idle, CPU-only, GPU-only, mixed workloads)
 - **Wide coverage**: Include low and high fan speed combinations to capture the full cooling curve
-- **Pump-radiator coupling**: Important to test various combinations of pwm2 (radiator fan) and pwm7 (pump) speeds to fit the coupling parameter `h`
+- **Fan combinations**: Test various combinations of pwm2, pwm4, pwm5 to capture independent and synergistic effects
 - **Measurements**: ~40-60 steady-state points (wait 30-60s for thermal equilibrium)
 
-**Key principle:** Need measurements across the full range to accurately fit the 11 thermal parameters. The model will then interpolate and extrapolate to any condition. Pay special attention to pump speed variation since it affects both base resistance and radiator fan effectiveness.
+**Key principle:** Need measurements across the full range to accurately fit the thermal parameters (2 + N_fans per target). The model will then interpolate and extrapolate to any condition. Focus on covering the extremes (fans at min/max) and representative midrange conditions.
 
 ## Advantages of This Approach
 
 1. **Physics-Based**: Model reflects actual thermal dynamics, not black-box curve fitting
 2. **Minimal Data Required**: ~40-60 data points instead of 1000+ exhaustive combinations
 3. **Generalizable**: Works for any intermediate condition via interpolation
-4. **Interpretable**: Parameters have physical meaning (resistances, conductances, pump-radiator coupling)
+4. **Interpretable**: Parameters have physical meaning (thermal resistances, fan effectiveness coefficients)
 5. **Power-Adaptive**: Accounts for how workload changes optimal fan speeds
-6. **Multi-Device Coupling**: Captures how fans and pump interact to cool components
-7. **Efficient Optimization**: Can solve for minimal fan/pump speeds via standard constrained optimization
+6. **Smooth & Differentiable**: sqrt function ensures smooth response, perfect for gradient-based optimization
+7. **Efficient Optimization**: Can solve for minimal fan speeds via standard constrained optimization
 8. **Predictable**: Can simulate "what-if" scenarios without physical testing
-9. **Automatic Efficiency**: Minimizing fan/pump speeds inherently avoids wasted effort and finds optimal operating points
+9. **Automatic Efficiency**: Minimizing fan speeds inherently avoids wasted effort and finds optimal operating points
+10. **Diminishing Returns Built-In**: sqrt term naturally models realistic convective cooling behavior
 
 ## Model Workflow
 
-1. **Data Collection**: Measure temperatures across range of fan speeds, pump speeds, and workloads
+1. **Data Collection**: Measure temperatures across range of fan speeds and workloads
    - Plots are automatically generated after each data point (configurable in `config.yaml`)
-    - Visualizations saved to `./data/<run_name>/plots/` directory (e.g., `./data/thermal_collection_20240118_120000/plots/`)
-   - 9 plot types: correlation matrix, temp vs fans, temp vs power, pump-radiator interaction, thermal resistance, pairwise interactions, cooling effectiveness, ambient normalization, 3D surfaces
+   - Visualizations saved to `./data/<run_name>/plots/` directory (e.g., `./data/thermal_collection_20240118_120000/plots/`)
+   - 9 plot types: correlation matrix, temp vs fans, temp vs power, thermal resistance, pairwise interactions, cooling effectiveness, ambient normalization, 3D surfaces
 
-2. **Parameter Fitting**: Fit the 11 thermal parameters using least-squares regression (scipy.optimize.curve_fit or similar)
+2. **Parameter Fitting**: Fit thermal parameters (offset, R_base, fan coefficients) using least-squares regression (scipy.optimize.minimize or similar)
 
 3. **Validation**: Verify model predictions match actual measurements (compute RMSE, plot predicted vs actual)
 
-4. **Optimization Setup**: Implement constrained optimizer to find minimal fan and pump speeds for given temperature targets
+4. **Optimization Setup**: Implement constrained optimizer to find minimal fan speeds for given temperature targets
 
-5. **Runtime Control**: Query optimizer with current conditions (P_cpu, P_gpu, T_amb) and temperature targets to get optimal fan and pump speeds
+5. **Runtime Control**: Query optimizer with current conditions (P_cpu, P_gpu, T_amb) and temperature targets to get optimal fan speeds
 
 6. **Monitoring**: Track model accuracy over time, recalibrate if needed (e.g., dust buildup changes thermal resistance)

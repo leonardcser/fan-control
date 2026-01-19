@@ -159,12 +159,17 @@ class BaselineGBM:
 # =============================================================================
 class PhysicsConstrainedModel:
     """
-    Physics model: T = T_amb + P_cpu × R_total(fans)
+    Physics-based thermal model with thermal spreading resistance.
 
-    R_total is the thermal resistance, which decreases with fan speed.
-    We model R as: R_base / (1 + sum(a_i × pwm_i))
+    Model: T = T_amb + offset + P × R_eff(fans)
 
-    This forces fans to have a physical effect through the resistance term.
+    Where R_eff is the effective thermal resistance:
+        R_eff = R_base / (1 + sum(a_i × sqrt(pwm_i + 1) / scale))
+
+    For CPU/GPU models, this captures:
+    - Base thermal resistance from heatsink to ambient
+    - Fan cooling reduces resistance (airflow increases heat transfer)
+    - sqrt() models diminishing returns at high fan speeds
     """
 
     def __init__(self, target: str = "T_cpu"):
@@ -172,26 +177,24 @@ class PhysicsConstrainedModel:
         self.n_fans = None
         self.target = target
 
-    def _resistance(self, fan_speeds, params):
-        """Compute thermal resistance from fan speeds."""
-        R_base = params[0]
-        fan_coeffs = params[1:-1]
-        R_min = params[-1]
-
-        # Resistance decreases with fan speed
-        # Use form: R = R_min + R_base / (1 + weighted_fan_effect)
-        fan_effect = sum(a * pwm for a, pwm in zip(fan_coeffs, fan_speeds))
-        R = R_min + R_base / (1 + fan_effect / 100)
-        return R
-
     def _predict_temp(self, X, params):
         """Predict temperature using physics model."""
-        P_cpu = X[:, 0]
+        P = X[:, 0]
         T_amb = X[:, 1]
         fan_speeds = [X[:, i] for i in range(2, X.shape[1])]
 
-        R = self._resistance(fan_speeds, params)
-        T_pred = T_amb + P_cpu * R
+        # Extract parameters: [offset, R_base, a_fan1, ..., a_fanN]
+        offset = params[0]
+        R_base = params[1]
+        a_coeffs = params[2:]
+
+        # Fan effect with sqrt for diminishing returns
+        fan_effect = sum(a * np.sqrt(pwm + 1) for a, pwm in zip(a_coeffs, fan_speeds))
+
+        # Effective thermal resistance
+        R_eff = R_base / (1 + fan_effect / 10)
+
+        T_pred = T_amb + offset + P * R_eff
         return T_pred
 
     def fit(self, df: pd.DataFrame):
@@ -200,26 +203,25 @@ class PhysicsConstrainedModel:
         self.n_fans = len(FAN_FEATURES)
 
         def loss(params):
-            # Ensure positive parameters
-            if any(p < 0 for p in params):
-                return 1e10
             pred = self._predict_temp(X, params)
             return np.mean((y - pred) ** 2)
 
-        # Initial guess: R_base, a_fan1, a_fan2, ..., R_min
-        # R ~ 0.5 °C/W is typical for air cooling
-        x0 = [0.3] + [1.0] * self.n_fans + [0.2]
+        # Initial guess: [offset, R_base, a_fan1..N]
+        x0 = np.array([0.0, 0.6] + [0.5] * self.n_fans)
 
-        # Bounds: all positive
-        bounds = [(0.01, 2.0)] + [(0.0, 5.0)] * self.n_fans + [(0.01, 1.0)]
+        # Bounds
+        bounds = [
+            (-10.0, 20.0),  # offset
+            (0.1, 2.0),  # R_base
+        ] + [(0.0, 5.0)] * self.n_fans  # fan coefficients
 
         result = minimize(loss, x0, method="L-BFGS-B", bounds=bounds)
         self.params = result.x
 
         print("  Physics model params:")
-        print(f"    R_base={self.params[0]:.4f}, R_min={self.params[-1]:.4f}")
+        print(f"    offset={self.params[0]:.4f}, R_base={self.params[1]:.4f}")
         for i, fan in enumerate(FAN_FEATURES):
-            print(f"    a_{fan}={self.params[i+1]:.4f}")
+            print(f"    a_{fan}={self.params[i+2]:.4f}")
 
     def predict(self, df: pd.DataFrame) -> np.ndarray:
         X = df[FEATURES].values
@@ -231,18 +233,19 @@ class PhysicsConstrainedModel:
 
 
 # =============================================================================
-# Model 3: Physics Model with Interaction Terms
+# Model 3: Physics Model with Higher-Order Fan Effects
 # =============================================================================
 class PhysicsWithInteractions:
     """
-    Extended physics model with fan interactions.
+    Extended physics model with interaction terms.
 
-    Based on the airflow diagram:
-    - pwm2 (radiator) primary cooling effect
-    - pwm4/pwm5 (case fans) provide fresh air that helps radiator
+    Model: T = T_amb + offset + P × R_eff(fans)
 
-    Model: T = T_amb + P × R_total
-    Where R_total considers both direct fan effects and interactions
+    Where R_eff includes higher-order fan interactions:
+        R_eff = R_base / (1 + sum(a_i × (pwm_i + 1)^0.5) + sum(b_ij × pwm_i × pwm_j) / scale)
+
+    This captures both direct fan effects via sqrt (diminishing returns)
+    and pairwise interactions between fans (e.g., case fans helping radiator).
     """
 
     def __init__(self, target: str = "T_cpu"):
@@ -251,22 +254,32 @@ class PhysicsWithInteractions:
         self.target = target
 
     def _predict_temp(self, X, params):
-        P_cpu = X[:, 0]
+        P = X[:, 0]
         T_amb = X[:, 1]
         fan_speeds = [X[:, i] for i in range(2, X.shape[1])]
 
-        R_base = params[0]
-        fan_coeffs = params[1:1+self.n_fans]
-        R_min = params[-1]
+        # Extract parameters: [offset, R_base, a_fan1, ..., a_fanN, interactions...]
+        offset = params[0]
+        R_base = params[1]
+        a_coeffs = params[2:2+self.n_fans]
 
-        # Direct fan effects
-        fan_effect = sum(k * pwm for k, pwm in zip(fan_coeffs, fan_speeds))
+        # Direct fan effects with sqrt for diminishing returns
+        fan_effect = sum(a * np.sqrt(pwm + 1) for a, pwm in zip(a_coeffs, fan_speeds))
 
-        # Total thermal conductance (inverse of resistance)
-        conductance = fan_effect
+        # Optional: Add pairwise interactions (if params provided)
+        if len(params) > 2 + self.n_fans:
+            interaction_coeffs = params[2+self.n_fans:]
+            idx = 0
+            for i in range(self.n_fans):
+                for j in range(i+1, self.n_fans):
+                    if idx < len(interaction_coeffs):
+                        fan_effect += interaction_coeffs[idx] * fan_speeds[i] * fan_speeds[j] / 100
+                    idx += 1
 
-        R_total = R_min + R_base / (1 + conductance / 100)
-        T_pred = T_amb + P_cpu * R_total
+        # Effective thermal resistance
+        R_eff = R_base / (1 + fan_effect / 10)
+
+        T_pred = T_amb + offset + P * R_eff
         return T_pred
 
     def fit(self, df: pd.DataFrame):
@@ -275,22 +288,26 @@ class PhysicsWithInteractions:
         self.n_fans = len(FAN_FEATURES)
 
         def loss(params):
-            if any(p < 0 for p in params):
-                return 1e10
             pred = self._predict_temp(X, params)
             return np.mean((y - pred) ** 2)
 
-        # Initial guess: R_base, k_fan1, k_fan2, ..., R_min
-        x0 = [0.3] + [1.0] * self.n_fans + [0.2]
-        bounds = [(0.01, 2.0)] + [(0.0, 5.0)] * self.n_fans + [(0.01, 1.0)]
+        # Initial guess: [offset, R_base, a_fan1..N, interaction_terms]
+        # Start simple without interactions
+        x0 = np.array([0.0, 0.6] + [0.5] * self.n_fans)
+
+        # Bounds
+        bounds = [
+            (-10.0, 20.0),  # offset
+            (0.1, 2.0),  # R_base
+        ] + [(0.0, 5.0)] * self.n_fans  # fan coefficients
 
         result = minimize(loss, x0, method="L-BFGS-B", bounds=bounds)
         self.params = result.x
 
-        print("  Physics+Interactions params:")
-        print(f"    R_base={self.params[0]:.4f}, R_min={self.params[-1]:.4f}")
+        print("  Physics model with interactions params:")
+        print(f"    offset={self.params[0]:.4f}, R_base={self.params[1]:.4f}")
         for i, fan in enumerate(FAN_FEATURES):
-            print(f"    k_{fan}={self.params[i+1]:.4f}")
+            print(f"    a_{fan}={self.params[i+2]:.4f}")
 
     def predict(self, df: pd.DataFrame) -> np.ndarray:
         X = df[FEATURES].values
