@@ -34,7 +34,7 @@ data_collection:
   # Fan/pump speed levels to test (percentage: 0-100)
   pwm2_levels: [20, 100]
   pwm4_levels: [0, 80]
-  pwm5_levels: [15, 100]
+  pwm5_levels: [0, 100]
   pwm7_levels: [60, 100]
 
   # Load levels to test
@@ -47,31 +47,33 @@ data_collection:
     #   description: "Idle"
 
     # CPU focused loads (assuming 24 cores)
+    - cpu_load: "--cpu 1"
+      gpu_load: ""
+      description: "CPU (1 cores)"
+    - cpu_load: "--cpu 2"
+      gpu_load: ""
+      description: "CPU (2 cores)"
+    - cpu_load: "--cpu 4"
+      gpu_load: ""
+      description: "CPU (4 cores)"
     - cpu_load: "--cpu 6"
       gpu_load: ""
-      description: "CPU Heat Max (6 cores)"
-    # - cpu_load: "--cpu 24"
-    #   gpu_load: ""
-    #   description: "CPU Full Load (24 cores)"
+      description: "CPU (6 cores)"
+    - cpu_load: "--cpu 10"
+      gpu_load: ""
+      description: "CPU (10 cores)"
+    - cpu_load: "--cpu 16"
+      gpu_load: ""
+      description: "CPU (16 cores)"
+    - cpu_load: "--cpu 24"
+      gpu_load: ""
+      description: "CPU (24 cores)"
 
     # GPU focused loads
-    - cpu_load: ""
-      gpu_load: "-d -m 50%"
-      description: "GPU Moderate Load"
-    # - cpu_load: ""
-    #   gpu_load: " "
-    #   description: "GPU Full Load"
+    - TODO
 
     # Mixed loads
-    # - cpu_load: "--cpu 12"
-    #   gpu_load: "-m 50%"
-    #   description: "Mixed Moderate"
-    - cpu_load: "--cpu 24"
-      gpu_load: "-d -m 50%"
-      description: "Mixed System Load"
-    - cpu_load: "--cpu 6"
-      gpu_load: "-m 90%"
-      description: "Full System Load"
+    - TODO
 
   # Measurement parameters
   equilibration_check_interval: 1 # How often to sample temperature (seconds)
@@ -85,7 +87,7 @@ data_collection:
 
   # Smart test point selection
   sampling_strategy: "latin_hypercube" # Options: latin_hypercube (recommended), random, grid
-  num_samples_per_load: 50 # Target number of data points per load level
+  num_samples_per_load: 15 # Target number of data points per load level
   sampling_seed: 42
 
 # Hardware parameters
@@ -114,11 +116,11 @@ safety:
   power_dependent_minimums:
     - component: "cpu" # Options: cpu, gpu
       power_threshold: 100 # If power > threshold
-      pwm2_min: 50
+      pwm2_min: 20
       pwm7_min: 80
 
   # Never test all fans at minimum simultaneously
-  min_total_cooling_effort: 25 # Sum of all PWM percentages must be >= 25%
+  min_total_cooling_effort: 15 # Sum of all PWM percentages must be >= 25%
 
 # Ambient temperature (optional but recommended for accurate model)
 ambient:
@@ -136,7 +138,7 @@ output:
 # This handles complex non-linearities and regime shifts (e.g. 6-core vs 24-core heat density).
 ml_model:
   type: "gradient_boosting"
-  
+
   # Features to use for prediction
   features:
     - P_cpu
@@ -146,18 +148,18 @@ ml_model:
     - pwm4
     - pwm5
     - pwm7
-  
+
   # Engineered features (automatically generated)
   # inv_pwm* = 1 / (pwm + 10)
   # P_*_pwm* = Power * inv_pwm (Interaction)
-  
+
   # Hyperparameters for GradientBoostingRegressor
   hyperparameters:
     n_estimators: 200
     learning_rate: 0.1
     max_depth: 4
     random_state: 42
-  
+
   # Targets to train models for
   targets:
     - T_cpu
