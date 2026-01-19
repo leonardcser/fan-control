@@ -9,25 +9,29 @@ devices:
     pwm_number: 2
     name: "CPU Radiator Fan"
     description: "Top radiator fan (pulls air through CPU radiator)"
-    min_pwm: 20 # Minimum safe speed (prevents stalling)
+    min_pwm: 20 # Minimum PWM value (from data collection)
+    stall_pwm: 20 # PWM below which fan stalls
 
   pwm4:
     pwm_number: 4
     name: "Bottom Intake Fans"
     description: "3× bottom case fans (GPU intake, fresh air)"
-    min_pwm: 15
+    min_pwm: 0 # Minimum PWM value (from data collection)
+    stall_pwm: 15 # PWM below which fan stalls
 
   pwm5:
     pwm_number: 5
     name: "Front/Rear Case Fans"
     description: "3× front intake + 1× rear exhaust"
-    min_pwm: 15
+    min_pwm: 0 # Minimum PWM value (from data collection)
+    stall_pwm: 15 # PWM below which fan stalls
 
   # pwm7:
   #   pwm_number: 7
   #   name: "CPU Pump"
   #   description: "AIO pump (coolant circulation)"
-  #   min_pwm: 40
+  #   min_pwm: 40 # Minimum PWM value (from data collection)
+  #   stall_pwm: 40 # PWM below which pump stalls
 
 # Plot configuration
 # Specify which fans to use for specific plots and their relationships
@@ -36,35 +40,35 @@ plot_config:
   # Shows how two fans interact to affect CPU temperature
   interaction_plot:
     enabled: true
-    fan1: "pwm2"  # Primary fan (e.g., radiator fan)
-    fan2: "pwm5"  # Secondary fan (e.g., case fans)
-    component: "cpu"  # Which component this interaction affects (cpu or gpu)
+    fan1: "pwm2" # Primary fan (e.g., radiator fan)
+    fan2: "pwm5" # Secondary fan (e.g., case fans)
+    component: "cpu" # Which component this interaction affects (cpu or gpu)
 
   # Thermal resistance plots
   # R = (T - T_amb) / Power
   thermal_resistance:
     cpu:
-      x_axis: "pwm2"  # Fan to plot on x-axis
-      color_by: null  # Fan to use for color gradient (null = use power)
+      x_axis: "pwm2" # Fan to plot on x-axis
+      color_by: null # Fan to use for color gradient (null = use power)
     gpu:
-      x_axis: "pwm4"  # Fan to plot on x-axis
-      color_by: null  # Fan to use for color gradient (null = use power)
+      x_axis: "pwm4" # Fan to plot on x-axis
+      color_by: null # Fan to use for color gradient (null = use power)
 
   # 3D surface plots
   # Temperature as function of two variables
   surface_3d:
     cpu:
-      x_axis: "pwm2"  # First fan
-      y_axis: "P_cpu"  # Second variable (can be another fan or P_cpu)
+      x_axis: "pwm2" # First fan
+      y_axis: "P_cpu" # Second variable (can be another fan or P_cpu)
     gpu:
-      x_axis: "pwm4"  # First fan
-      y_axis: "P_gpu"  # Second variable
+      x_axis: "pwm4" # First fan
+      y_axis: "P_gpu" # Second variable
 
   # Cooling effectiveness plots
   # Shows normalized temperature rise vs fan speed
   cooling_effectiveness:
-    cpu_fans: ["pwm2"]  # Primary fans affecting CPU cooling
-    gpu_fans: ["pwm4", "pwm5"]  # Primary fans affecting GPU cooling
+    cpu_fans: ["pwm2"] # Primary fans affecting CPU cooling
+    gpu_fans: ["pwm4", "pwm5"] # Primary fans affecting GPU cooling
 
 # Data collection test matrix
 data_collection:

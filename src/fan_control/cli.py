@@ -10,6 +10,7 @@ from .plot.cli import plot_mode
 from .control.cli import run_mode
 from .control.cool import cool_mode
 from .simulate.cli import simulate_mode
+from .train.cli import train_mode
 
 
 def main() -> None:
@@ -107,6 +108,37 @@ Example usage:
         help="Path to configuration YAML file (default: config.yaml)",
     )
 
+    # Train subcommand (unified ML pipeline)
+    train_parser = subparsers.add_parser(
+        "train",
+        help="Run ML training pipeline (fit, plot, simulate stages)",
+    )
+    train_parser.add_argument(
+        "--config",
+        default="config.yaml",
+        help="Path to configuration YAML file (default: config.yaml)",
+    )
+    train_parser.add_argument(
+        "--run",
+        required=True,
+        help="Path to run directory containing collected CSV data",
+    )
+    train_parser.add_argument(
+        "--fit",
+        action="store_true",
+        help="Run only model training stage",
+    )
+    train_parser.add_argument(
+        "--plot",
+        action="store_true",
+        help="Run only visualization stage",
+    )
+    train_parser.add_argument(
+        "--simulate",
+        action="store_true",
+        help="Run only controller simulation stage",
+    )
+
     # Simulate subcommand
     simulate_parser = subparsers.add_parser(
         "simulate",
@@ -131,6 +163,8 @@ Example usage:
         collect_mode(args)
     elif args.command == "plot":
         plot_mode(args)
+    elif args.command == "train":
+        train_mode(args)
     elif args.command == "run":
         run_mode(args)
     elif args.command == "cool":

@@ -191,9 +191,9 @@ class DataCollector:
             r = device_ranges[key]
             value = r["min"] + (pct / 100.0) * (r["max"] - r["min"])
             speed = int(round(value))
-            # Clamp to 0 if below min_pwm (fan would stall)
-            min_pwm = self.devices[key]["min_pwm"]
-            if 0 < speed < min_pwm:
+            # Clamp to 0 if below stall_pwm (fan would stall)
+            stall_pwm = self.devices[key]["stall_pwm"]
+            if 0 < speed < stall_pwm:
                 speed = 0
             return speed
 
@@ -273,9 +273,9 @@ class DataCollector:
                     # Convert percentage to actual PWM value
                     speed = int(round(lvl_min + pct * (lvl_max - lvl_min)))
 
-                    # Clamp: if below min_pwm but > 0, set to 0 (fan would stall)
-                    min_pwm = self.devices[key]["min_pwm"]
-                    if 0 < speed < min_pwm:
+                    # Clamp: if below stall_pwm but > 0, set to 0 (fan would stall)
+                    stall_pwm = self.devices[key]["stall_pwm"]
+                    if 0 < speed < stall_pwm:
                         speed = 0
 
                     pwm_map[key] = speed

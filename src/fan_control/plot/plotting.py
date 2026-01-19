@@ -797,10 +797,10 @@ def plot_3d_surfaces(df: pd.DataFrame) -> plt.Figure:
         y_grid = np.linspace(df[y_var].min(), df[y_var].max(), 30)
         x_mesh, y_mesh = np.meshgrid(x_grid, y_grid)
 
-        # Interpolate CPU temperature
+        # Interpolate CPU temperature (use linear to avoid extrapolation artifacts)
         points = df[[x_var, y_var]].values
         values = df["T_cpu"].values
-        T_cpu_interp = griddata(points, values, (x_mesh, y_mesh), method="cubic")
+        T_cpu_interp = griddata(points, values, (x_mesh, y_mesh), method="linear")
 
         surf1 = ax1.plot_surface(
             x_mesh, y_mesh, T_cpu_interp, cmap="viridis", alpha=0.8, edgecolor="none"
@@ -834,7 +834,7 @@ def plot_3d_surfaces(df: pd.DataFrame) -> plt.Figure:
 
     points2 = df[["P_cpu", fan_for_power_plot]].values
     values2 = df["T_cpu"].values
-    T_cpu_interp2 = griddata(points2, values2, (P_cpu_mesh, fan_mesh), method="cubic")
+    T_cpu_interp2 = griddata(points2, values2, (P_cpu_mesh, fan_mesh), method="linear")
 
     surf2 = ax2.plot_surface(
         P_cpu_mesh,
@@ -896,11 +896,11 @@ def plot_3d_surfaces(df: pd.DataFrame) -> plt.Figure:
         y_grid_gpu = np.linspace(df[y_var_gpu].min(), df[y_var_gpu].max(), 30)
         x_mesh_gpu, y_mesh_gpu = np.meshgrid(x_grid_gpu, y_grid_gpu)
 
-        # Interpolate GPU temperature
+        # Interpolate GPU temperature (use linear to avoid extrapolation artifacts)
         points3 = df[[x_var_gpu, y_var_gpu]].values
         values3 = df["T_gpu"].values
         T_gpu_interp = griddata(
-            points3, values3, (x_mesh_gpu, y_mesh_gpu), method="cubic"
+            points3, values3, (x_mesh_gpu, y_mesh_gpu), method="linear"
         )
 
         surf3 = ax3.plot_surface(
@@ -938,7 +938,7 @@ def plot_3d_surfaces(df: pd.DataFrame) -> plt.Figure:
 
     points4 = df[["P_gpu", fan_for_gpu_power_plot]].values
     T_gpu_interp2 = griddata(
-        points4, values3, (P_gpu_mesh, fan_gpu_mesh), method="cubic"
+        points4, values3, (P_gpu_mesh, fan_gpu_mesh), method="linear"
     )
 
     fan_gpu_name = CONFIG["devices"][fan_for_gpu_power_plot]["name"]

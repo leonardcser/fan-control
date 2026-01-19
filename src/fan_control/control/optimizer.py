@@ -1,33 +1,30 @@
 import numpy as np
-import pandas as pd
 from scipy.optimize import minimize
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
-import logging
 from ..fit.train import ThermalModel
-
-logger = logging.getLogger(__name__)
 
 
 class Optimizer:
     """
     Finds minimal fan speeds to satisfy temperature constraints using the ML model.
+    Uses COBYLA with cached numpy predictions for performance.
     """
 
     def __init__(self, model_path: Path, config: Dict):
         self.model = ThermalModel.load(model_path)
-        self.config = config
         self.devices = config["devices"]
 
-        # Map device names to optimization indices
-        # Dynamically get enabled devices from config
         self.pwm_names = list(self.devices.keys())
         self.bounds = self._get_bounds()
 
-        # Optimization settings
-        # Finite difference step size (epsilon) for SLSQP
-        # With the new smooth 2-stage model, we don't need large jumps.
-        self.eps = 1.0
+        # Pre-compute feature order matching model's expected input
+        # Model expects: [P_cpu, P_gpu, T_amb, pwm1, pwm2, ...]
+        self.feature_order = self.model.feature_names_in_
+        self.n_pwm = len(self.pwm_names)
+
+        # Map pwm names to indices in feature vector
+        self.pwm_indices = {name: self.feature_order.index(name) for name in self.pwm_names}
 
     def _get_bounds(self) -> List[Tuple[float, float]]:
         """Get (min, max) bounds for each PWM channel."""
@@ -45,109 +42,73 @@ class Optimizer:
         weights: Optional[Dict[str, float]] = None,
         initial_guess: Optional[Dict[str, float]] = None,
     ) -> Dict[str, int]:
-        """
-        Find optimal fan speeds.
-
-        Args:
-            current_state: Dict with 'P_cpu', 'P_gpu', 'T_amb'
-            targets: Dict with 'T_cpu', 'T_gpu' (max allowed temps)
-            weights: Optional weights for each fan (default 1.0)
-            initial_guess: Optional starting point for optimization (default: 50%)
-
-        Returns:
-            Dict mapping pwm_name -> optimal_value (int)
-        """
-        # 1. Setup Initial Guess
+        """Find optimal fan speeds."""
+        # Initial guess
         if initial_guess:
-            x0 = [float(initial_guess[name]) for name in self.pwm_names]
+            x0 = np.array([float(initial_guess[name]) for name in self.pwm_names])
         else:
-            # Smart Default: Start at minimums if we have no clue,
-            # effectively "ramping up" if needed, rather than "cooling down"
-            x0 = [b[0] for b in self.bounds]
+            x0 = np.array([b[0] for b in self.bounds])
 
-        # 2. Heuristic Check removed.
-        # We rely purely on the optimizer and the model.
-
-        # Default weights (minimize sum of speeds)
+        # Weights for objective
         if weights is None:
-            # We can weight pump less if we want, or louder fans more
-            w = np.ones(len(self.pwm_names))
+            w = np.ones(self.n_pwm)
         else:
             w = np.array([weights[name] for name in self.pwm_names])
 
-        # 2. Define Objective Function
-        # Scale weights to be comparable to constraint gradients (~0.01 - 0.05)
-        # This helps the optimizer balance "cost of fan" vs "benefit of cooling"
-        # If weights are too high (1.0), the optimizer fights hard against increasing fans.
-        scale_factor = 0.01
+        target_cpu = targets["T_cpu"]
+        target_gpu = targets["T_gpu"]
 
-        def objective(x):
+        # Pre-build base feature vector with state values
+        base_features = np.zeros(len(self.feature_order))
+        for i, name in enumerate(self.feature_order):
+            if name in current_state:
+                base_features[i] = current_state[name]
+
+        # Cache for predictions (avoid redundant model calls)
+        cache = {}
+
+        def get_temps(x: np.ndarray) -> Tuple[float, float]:
+            """Get cached temperature predictions."""
+            key = tuple(np.round(x, 4))
+            if key not in cache:
+                features = base_features.copy()
+                for i, name in enumerate(self.pwm_names):
+                    features[self.pwm_indices[name]] = x[i]
+                t_cpu, t_gpu = self.model.predict_numpy(features)
+                cache[key] = (t_cpu[0], t_gpu[0])
+            return cache[key]
+
+        def objective(x: np.ndarray) -> float:
             """Minimize weighted sum of fan speeds."""
-            return np.sum(x * w) * scale_factor
+            return np.dot(x, w) * 0.01
 
-        # 3. Define Constraints (T_pred <= T_target  =>  T_target - T_pred >= 0)
-        def constraint_cpu(x):
-            inputs = self._prepare_input_df(x, current_state)
-            t_pred, _ = self.model.predict(inputs)
-            # Safety margin: Target - Prediction (must be >= 0)
-            return targets["T_cpu"] - t_pred[0]
+        def constraint_cpu(x: np.ndarray) -> float:
+            t_cpu, _ = get_temps(x)
+            return target_cpu - t_cpu
 
-        def constraint_gpu(x):
-            inputs = self._prepare_input_df(x, current_state)
-            _, t_pred = self.model.predict(inputs)
-            return targets["T_gpu"] - t_pred[0]
+        def constraint_gpu(x: np.ndarray) -> float:
+            _, t_gpu = get_temps(x)
+            return target_gpu - t_gpu
 
+        # Build constraints including bounds for COBYLA
         constraints = [
             {"type": "ineq", "fun": constraint_cpu},
             {"type": "ineq", "fun": constraint_gpu},
         ]
+        for i, (lo, hi) in enumerate(self.bounds):
+            constraints.append({"type": "ineq", "fun": lambda x, i=i, lo=lo: x[i] - lo})
+            constraints.append({"type": "ineq", "fun": lambda x, i=i, hi=hi: hi - x[i]})
 
-        # Add bound constraints for COBYLA (which doesn't support bounds argument)
-        cobyla_constraints = list(constraints)
-        for i, (min_v, max_v) in enumerate(self.bounds):
-            # x[i] >= min_v  =>  x[i] - min_v >= 0
-            cobyla_constraints.append(
-                {"type": "ineq", "fun": lambda x, idx=i, m=min_v: x[idx] - m}
-            )
-            # x[i] <= max_v  =>  max_v - x[i] >= 0
-            cobyla_constraints.append(
-                {"type": "ineq", "fun": lambda x, idx=i, M=max_v: M - x[idx]}
-            )
-
-        # 4. Run Optimization
-        # Method: COBYLA (Gradient-free, handles constraints)
-        # We use COBYLA because the underlying model (Gradient Boosting) is non-smooth
-        # (piecewise constant), so gradient-based methods like SLSQP fail (grad=0).
-        # rhobeg=5.0 ensures we step over flat regions.
+        # COBYLA - gradient-free, fewer model calls per iteration
         result = minimize(
             objective,
             x0,
             method="COBYLA",
-            constraints=cobyla_constraints,
-            options={"rhobeg": 5.0, "tol": 1e-4, "disp": False, "maxiter": 200},
+            constraints=constraints,
+            options={"maxiter": 50, "rhobeg": 10.0, "tol": 0.5},
         )
 
-        # 5. Process Result
-        if not result.success:
-            # If failed, we likely hit a constraint violation (infeasible target).
-
-            # Check feasibility
-            c_vals = [c["fun"](result.x) for c in constraints]
-            is_feasible = all(v >= -2.0 for v in c_vals)  # Relaxed tolerance
-
-            if is_feasible:
-                # If feasible (or close enough) but failed, accept result
-                pass
-            else:
-                # Infeasible. We should maximize fans that help.
-                # However, simple logic: if we are overheating, Max Out.
-                # Just return the optimizer's best effort, but enforce Max if violation is bad.
-
-                # logger.debug(f"Opt failed: {result.message}. C: {c_vals}")
-                pass
-
-        # Convert to integer PWM values, enforcing hard bounds
-        # COBYLA is a soft-constraint solver and may violate bounds when infeasible
+        # Convert to integer PWM values
         optimal_pwms = {}
         for i, name in enumerate(self.pwm_names):
             min_val, max_val = self.bounds[i]
@@ -155,14 +116,3 @@ class Optimizer:
             optimal_pwms[name] = int(round(clipped))
 
         return optimal_pwms
-
-    def _prepare_input_df(self, x: np.ndarray, state: Dict[str, float]) -> pd.DataFrame:
-        """Create single-row DataFrame for model prediction."""
-        row = state.copy()
-
-        # Update PWM values from optimizer vector
-        # Model now trained on 0-100%
-        for i, name in enumerate(self.pwm_names):
-            row[name] = x[i]
-
-        return pd.DataFrame([row])

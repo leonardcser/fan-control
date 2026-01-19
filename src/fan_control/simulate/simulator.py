@@ -24,7 +24,7 @@ def run_simulation(model_path: Path, config: Dict, output_dir: Path):
     optimizer = Optimizer(model_path, config)
 
     # Define Targets
-    targets = {"T_cpu": 75.0, "T_gpu": 70.0}
+    targets = {"T_cpu": 85.0, "T_gpu": 60.0}
 
     # Generate Synthetic Scenario (0 to 100 seconds/steps)
     # Scenario:
@@ -117,7 +117,9 @@ def generate_simulation_plots(df: pd.DataFrame, targets: Dict, output_dir: Path)
 
     # Generate fan colors and labels dynamically from available PWM columns
     pwm_cols = sorted([col for col in df.columns if col.startswith("pwm")])
-    fan_colors = {pwm: FAN_COLORS[i % len(FAN_COLORS)] for i, pwm in enumerate(pwm_cols)}
+    fan_colors = {
+        pwm: FAN_COLORS[i % len(FAN_COLORS)] for i, pwm in enumerate(pwm_cols)
+    }
     fan_labels_short = {pwm: pwm.upper() for pwm in pwm_cols}
     fan_labels_long = {pwm: f"{pwm.upper()}" for pwm in pwm_cols}
 
@@ -153,8 +155,12 @@ def generate_simulation_plots(df: pd.DataFrame, targets: Dict, output_dir: Path)
 
     for pwm_name in cpu_fan_priority[:4]:  # Limit to first 4 fans to avoid clutter
         l = ax2.plot(
-            df["time"], df[pwm_name], label=f"{fan_labels_long[pwm_name]}",
-            color=fan_colors[pwm_name], alpha=0.7, linewidth=1.5
+            df["time"],
+            df[pwm_name],
+            label=f"{fan_labels_long[pwm_name]}",
+            color=fan_colors[pwm_name],
+            alpha=0.7,
+            linewidth=1.5,
         )
         fan_lines.extend(l)
 
@@ -201,8 +207,12 @@ def generate_simulation_plots(df: pd.DataFrame, targets: Dict, output_dir: Path)
 
     for pwm_name in gpu_fan_priority[:4]:  # Limit to first 4 fans to avoid clutter
         l = ax2.plot(
-            df["time"], df[pwm_name], label=f"{fan_labels_long[pwm_name]}",
-            color=fan_colors[pwm_name], alpha=0.7, linewidth=1.5
+            df["time"],
+            df[pwm_name],
+            label=f"{fan_labels_long[pwm_name]}",
+            color=fan_colors[pwm_name],
+            alpha=0.7,
+            linewidth=1.5,
         )
         fan_lines.extend(l)
 
@@ -220,8 +230,13 @@ def generate_simulation_plots(df: pd.DataFrame, targets: Dict, output_dir: Path)
 
     for pwm_name in pwm_cols:
         if pwm_name in df.columns:
-            plt.plot(df["time"], df[pwm_name], label=f"{fan_labels_short[pwm_name]}",
-                    color=fan_colors[pwm_name], linewidth=1.5)
+            plt.plot(
+                df["time"],
+                df[pwm_name],
+                label=f"{fan_labels_short[pwm_name]}",
+                color=fan_colors[pwm_name],
+                linewidth=1.5,
+            )
 
     plt.ylabel("PWM")
     plt.xlabel("Time")
@@ -233,7 +248,13 @@ def generate_simulation_plots(df: pd.DataFrame, targets: Dict, output_dir: Path)
 
     # 4. Timing Plot
     plt.figure(figsize=(12, 4))
-    plt.plot(df["time"], df["opt_time_ms"], color="purple", label="Optimization Time", linewidth=1.5)
+    plt.plot(
+        df["time"],
+        df["opt_time_ms"],
+        color="purple",
+        label="Optimization Time",
+        linewidth=1.5,
+    )
     plt.ylabel("Time (ms)")
     plt.xlabel("Time Step")
     plt.title("Controller Latency Analysis")
@@ -279,7 +300,7 @@ def plot_pwm_impact(model: ThermalModel, config: Dict, output_dir: Path):
     base_state = {
         "P_cpu": 100.0,  # Medium CPU load
         "P_gpu": 150.0,  # Medium GPU load
-        "T_amb": 25.0,   # Room temperature
+        "T_amb": 25.0,  # Room temperature
     }
 
     # Set baseline fan speeds (median of their range)
@@ -292,7 +313,9 @@ def plot_pwm_impact(model: ThermalModel, config: Dict, output_dir: Path):
     fig, (ax_cpu, ax_gpu) = plt.subplots(1, 2, figsize=(16, 6))
 
     # Generate colors for each fan
-    fan_colors = {pwm: FAN_COLORS[i % len(FAN_COLORS)] for i, pwm in enumerate(pwm_names)}
+    fan_colors = {
+        pwm: FAN_COLORS[i % len(FAN_COLORS)] for i, pwm in enumerate(pwm_names)
+    }
 
     # For each fan, vary it and plot temperature response
     for pwm_name in pwm_names:
@@ -319,24 +342,44 @@ def plot_pwm_impact(model: ThermalModel, config: Dict, output_dir: Path):
             temps_gpu.append(t_gpu_pred[0])
 
         # Plot CPU impact
-        ax_cpu.plot(pwm_values, temps_cpu, label=pwm_name.upper(),
-                    color=fan_colors[pwm_name], linewidth=2, marker='o', markersize=2)
+        ax_cpu.plot(
+            pwm_values,
+            temps_cpu,
+            label=pwm_name.upper(),
+            color=fan_colors[pwm_name],
+            linewidth=2,
+            marker="o",
+            markersize=2,
+        )
 
         # Plot GPU impact
-        ax_gpu.plot(pwm_values, temps_gpu, label=pwm_name.upper(),
-                    color=fan_colors[pwm_name], linewidth=2, marker='o', markersize=2)
+        ax_gpu.plot(
+            pwm_values,
+            temps_gpu,
+            label=pwm_name.upper(),
+            color=fan_colors[pwm_name],
+            linewidth=2,
+            marker="o",
+            markersize=2,
+        )
 
     # Format CPU plot
     ax_cpu.set_xlabel("PWM (%)", fontsize=12)
     ax_cpu.set_ylabel("CPU Temperature (°C)", fontsize=12)
-    ax_cpu.set_title(f"PWM Impact on CPU Temperature\n(P_cpu={base_state['P_cpu']}W, P_gpu={base_state['P_gpu']}W)", fontsize=13)
+    ax_cpu.set_title(
+        f"PWM Impact on CPU Temperature\n(P_cpu={base_state['P_cpu']}W, P_gpu={base_state['P_gpu']}W)",
+        fontsize=13,
+    )
     ax_cpu.legend(loc="best")
     ax_cpu.grid(True, alpha=0.3)
 
     # Format GPU plot
     ax_gpu.set_xlabel("PWM (%)", fontsize=12)
     ax_gpu.set_ylabel("GPU Temperature (°C)", fontsize=12)
-    ax_gpu.set_title(f"PWM Impact on GPU Temperature\n(P_cpu={base_state['P_cpu']}W, P_gpu={base_state['P_gpu']}W)", fontsize=13)
+    ax_gpu.set_title(
+        f"PWM Impact on GPU Temperature\n(P_cpu={base_state['P_cpu']}W, P_gpu={base_state['P_gpu']}W)",
+        fontsize=13,
+    )
     ax_gpu.legend(loc="best")
     ax_gpu.grid(True, alpha=0.3)
 
@@ -378,7 +421,9 @@ def plot_partial_dependence(model: ThermalModel, config: Dict, output_dir: Path)
     # Add PWM features
     for pwm_name in pwm_names:
         min_pwm = devices[pwm_name]["min_pwm"]
-        features_to_plot.append((pwm_name, np.linspace(min_pwm, 100, 50), f"{pwm_name.upper()} (%)"))
+        features_to_plot.append(
+            (pwm_name, np.linspace(min_pwm, 100, 50), f"{pwm_name.upper()} (%)")
+        )
 
     # Calculate grid dimensions
     n_features = len(features_to_plot)
@@ -389,7 +434,9 @@ def plot_partial_dependence(model: ThermalModel, config: Dict, output_dir: Path)
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(15, 4 * n_rows))
     axes = axes.flatten() if n_rows > 1 else [axes] if n_cols == 1 else axes
 
-    for idx, (feature_name, feature_range, feature_label) in enumerate(features_to_plot):
+    for idx, (feature_name, feature_range, feature_label) in enumerate(
+        features_to_plot
+    ):
         ax = axes[idx]
 
         temps_cpu = []
@@ -489,24 +536,47 @@ def plot_fan_efficiency(model: ThermalModel, config: Dict, output_dir: Path):
 
     fig, ax = plt.subplots(figsize=(12, 6))
 
-    bars_cpu = ax.bar(x - width/2, efficiencies_cpu, width, label="CPU Cooling", color="red", alpha=0.7)
-    bars_gpu = ax.bar(x + width/2, efficiencies_gpu, width, label="GPU Cooling", color="green", alpha=0.7)
+    bars_cpu = ax.bar(
+        x - width / 2,
+        efficiencies_cpu,
+        width,
+        label="CPU Cooling",
+        color="red",
+        alpha=0.7,
+    )
+    bars_gpu = ax.bar(
+        x + width / 2,
+        efficiencies_gpu,
+        width,
+        label="GPU Cooling",
+        color="green",
+        alpha=0.7,
+    )
 
     # Add value labels on bars
     for bars in [bars_cpu, bars_gpu]:
         for bar in bars:
             height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2., height,
-                   f'{height:.2f}', ha='center', va='bottom', fontsize=9)
+            ax.text(
+                bar.get_x() + bar.get_width() / 2.0,
+                height,
+                f"{height:.2f}",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+            )
 
     ax.set_xlabel("Fan", fontsize=12)
     ax.set_ylabel("Cooling Efficiency (°C per 10% PWM)", fontsize=12)
-    ax.set_title("Fan Cooling Efficiency Comparison\n(Higher = More effective cooling per PWM increase)", fontsize=13)
+    ax.set_title(
+        "Fan Cooling Efficiency Comparison\n(Higher = More effective cooling per PWM increase)",
+        fontsize=13,
+    )
     ax.set_xticks(x)
     ax.set_xticklabels([name.upper() for name in pwm_names])
     ax.legend()
-    ax.grid(True, alpha=0.3, axis='y')
-    ax.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+    ax.grid(True, alpha=0.3, axis="y")
+    ax.axhline(y=0, color="black", linestyle="-", linewidth=0.5)
 
     plt.tight_layout()
     plt.savefig(output_dir / "model_fan_efficiency.png", dpi=150)

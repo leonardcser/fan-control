@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
 from typing import Dict, Tuple, Any, List
-from scipy.optimize import minimize
 
 # HistGradientBoostingRegressor supports monotonic constraints natively
 from sklearn.ensemble import HistGradientBoostingRegressor
@@ -141,38 +140,37 @@ class ThermalModel:
 
     def predict(self, df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Predict temperatures.
+        Predict temperatures from DataFrame.
 
         Args:
-            df: Input dataframe
+            df: Input dataframe with columns matching feature_names_in_
+
+        Returns:
+            Tuple of (cpu_temps, gpu_temps)
+        """
+        X = np.asarray(df[self.feature_names_in_].values)
+        return self.predict_numpy(X)
+
+    def predict_numpy(self, X: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Fast prediction from numpy array. No DataFrame overhead.
+
+        Args:
+            X: 2D array with shape (n_samples, n_features) in feature_names_in_ order
 
         Returns:
             Tuple of (cpu_temps, gpu_temps)
         """
         if self.cpu_model is None and self.gpu_model is None:
-            # Return zeros if not trained (or raise error)
             logger.warning("Models not trained, returning zeros")
-            return np.zeros(len(df)), np.zeros(len(df))
+            n = X.shape[0] if X.ndim == 2 else 1
+            return np.zeros(n), np.zeros(n)
 
-        df_eng = self._engineer_features(df)
+        if X.ndim == 1:
+            X = X.reshape(1, -1)
 
-        # Handle missing columns safely
-        missing = [col for col in self.feature_names_in_ if col not in df_eng.columns]
-        if missing:
-            logger.warning(f"Missing features for prediction: {missing}")
-            # Add missing columns with defaults (safest is to fail, but here we patch)
-            for col in missing:
-                df_eng[col] = 0
-
-        X = df_eng[self.feature_names_in_]
-
-        t_cpu = np.zeros(len(df))
-        if self.cpu_model:
-            t_cpu = self.cpu_model.predict(X)
-
-        t_gpu = np.zeros(len(df))
-        if self.gpu_model:
-            t_gpu = self.gpu_model.predict(X)
+        t_cpu = self.cpu_model.predict(X) if self.cpu_model else np.zeros(X.shape[0])
+        t_gpu = self.gpu_model.predict(X) if self.gpu_model else np.zeros(X.shape[0])
 
         return t_cpu, t_gpu
 
