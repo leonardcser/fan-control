@@ -79,7 +79,7 @@ class SafetyMonitor:
         """Set fans to auto control (mode 5) for safety."""
         print("Setting all fans to auto control mode...")
         for _, pwm_num in self.device_pwms.items():
-            self.hardware.set_pwm_mode(pwm_num, 5)
+            self.hardware.enable_auto_control(pwm_num)
 
     def _apply_abort_speeds(self) -> None:
         """Set fans to full speed when aborting a test point."""

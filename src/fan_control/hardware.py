@@ -60,9 +60,7 @@ class HardwareController:
         if source == "home-assistant":
             try:
                 url = f"{self.ambient_config['ha_url'].rstrip('/')}/api/states/{self.ambient_config['ha_entity_id']}"
-                token = os.environ.get(
-                    self.ambient_config["ha_token_env"]
-                )
+                token = os.environ.get(self.ambient_config["ha_token_env"])
 
                 if not token:
                     print("Error: HA_TOKEN not found in environment", file=sys.stderr)
@@ -218,6 +216,10 @@ class HardwareController:
     def enable_manual_control(self, pwm_num: int) -> bool:
         """Enable manual PWM control (mode 1)."""
         return self.set_pwm_mode(pwm_num, 1)
+
+    def enable_auto_control(self, pwm_num: int) -> bool:
+        """Restore automatic PWM control (mode 5)."""
+        return self.set_pwm_mode(pwm_num, 5)
 
     def set_fan_speed(self, pwm_num: int, percentage: int) -> bool:
         """Set fan speed (0-100 percentage)."""

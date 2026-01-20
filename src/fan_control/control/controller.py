@@ -152,6 +152,14 @@ class FanController:
         ]
         self.hw.set_all_fans_max(pwm_nums)
 
+    def _restore_auto_control(self):
+        """Restore fans to automatic control."""
+        logger.info("Restoring fans to automatic control")
+        for pwm_name in self.optimizer.pwm_names:
+            pwm_num = self.config["devices"][pwm_name]["pwm_number"]
+            self.hw.enable_auto_control(pwm_num)
+            logger.info(f"Restored {pwm_name} (pwm{pwm_num}) to auto control")
+
     def _apply_speeds(self, pwms: Dict[str, int]):
         """Set hardware PWM values."""
         for name, value in pwms.items():
@@ -162,8 +170,5 @@ class FanController:
         """Graceful shutdown handler."""
         logger.info("Shutdown signal received. Stopping...")
         self.running = False
-        # Optional: Set fans to safe defaults on exit?
-        # For now, let's leave them as-is or set to a safe 50%?
-        # Better safe:
-        self._emergency_mode()
+        self._restore_auto_control()
         sys.exit(0)
