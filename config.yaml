@@ -259,15 +259,15 @@ ml_model:
 optimizer:
   method: "COBYLA"
   options:
-    maxiter: 100 # Maximum number of iterations
-    rhobeg: 10.0 # Initial trust region radius
+    maxiter: 200 # Maximum number of iterations
+    rhobeg: 15.0 # Initial trust region radius
     tol: 0.5 # Tolerance for constraint violation
 
 # Controller Configuration
 controller:
   # Target temperatures for the control loop (°C)
   targets:
-    T_cpu: 75.0  # Target CPU temperature
-    T_gpu: 70.0  # Target GPU temperature
+    T_cpu: 83.0  # Target CPU temperature
+    T_gpu: 60.0  # Target GPU temperature
   # Control loop interval (seconds)
   interval: 2.0
