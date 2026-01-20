@@ -258,6 +258,18 @@ class HardwareController:
         for pwm_num in fan_pwms:
             self.set_fan_speed(pwm_num, 100)
 
+    def get_pwm_value(self, pwm_num: int) -> Optional[int]:
+        """Read current PWM value (0-255) for a fan."""
+        if not self.hwmon_path:
+            raise HardwareError("hwmon device not found")
+
+        pwm_path = Path(self.hwmon_path) / f"pwm{pwm_num}"
+        try:
+            with open(pwm_path, "r") as f:
+                return int(f.read().strip())
+        except (IOError, ValueError):
+            return None
+
     def get_cpu_power(self) -> Optional[float]:
         """
         Get CPU power draw using turbostat.

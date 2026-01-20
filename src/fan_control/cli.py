@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from .collect.cli import collect_mode
 from .control.cli import run_mode
 from .control.cool import cool_mode
+from .control.validate import validate_mode
 from .train.cli import train_mode
 
 
@@ -26,6 +27,9 @@ Example usage:
 
   # Run the optimized fan controller
   sudo fan-control run --config config.yaml --run data/fan_control_20260119_040722
+
+  # Validate model predictions against real temps (generates plots on Ctrl+C)
+  sudo fan-control validate --config config.yaml --run data/fan_control_20260119_040722
 
   # Cool down the system
   sudo fan-control cool --config config.yaml
@@ -95,6 +99,22 @@ Example usage:
         help="Path to run directory containing collected CSV data",
     )
 
+    # Validate subcommand
+    validate_parser = subparsers.add_parser(
+        "validate",
+        help="Run controller and log predicted vs actual temps for model validation",
+    )
+    validate_parser.add_argument(
+        "--config",
+        default="config.yaml",
+        help="Path to configuration YAML file (default: config.yaml)",
+    )
+    validate_parser.add_argument(
+        "--run",
+        required=True,
+        help="Path to run directory containing the trained model",
+    )
+
     args = parser.parse_args()
 
     if args.command == "collect":
@@ -105,6 +125,8 @@ Example usage:
         run_mode(args)
     elif args.command == "cool":
         cool_mode(args)
+    elif args.command == "validate":
+        validate_mode(args)
 
 
 if __name__ == "__main__":
