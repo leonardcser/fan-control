@@ -23,8 +23,8 @@ def run_simulation(model_path: Path, config: Dict, output_dir: Path):
     # Create optimizer
     optimizer = Optimizer(model_path, config)
 
-    # Define Targets
-    targets = {"T_cpu": 85.0, "T_gpu": 60.0}
+    # Load targets from controller config
+    targets = config["controller"]["targets"]
 
     # Generate Synthetic Scenario (0 to 100 seconds/steps)
     # Scenario:

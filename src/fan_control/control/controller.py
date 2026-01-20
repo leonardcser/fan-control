@@ -37,14 +37,9 @@ class FanController:
         # Initialize Optimizer
         self.optimizer = Optimizer(model_path, self.config)
 
-        # Default Targets (can be overridden)
-        self.targets = {
-            "T_cpu": 75.0,  # Target CPU Temp
-            "T_gpu": 70.0,  # Target GPU Temp
-        }
-
-        # Loop settings
-        self.interval = 5.0  # Seconds
+        # Load targets and interval from config
+        self.targets = self.config["controller"]["targets"]
+        self.interval = self.config["controller"]["interval"]
 
         # State tracking for optimization continuity
         self.last_pwms = {name: 50.0 for name in self.optimizer.pwm_names}

@@ -87,8 +87,8 @@ data_collection:
     - cpu_load: ""
       gpu_load: ""
       description: "Idle"
-    #
-    # # CPU focused loads (assuming 24 cores)
+
+    # CPU focused loads (assuming 24 cores)
     - cpu_load: "--cpu 1"
       gpu_load: ""
       description: "CPU (1 cores)"
@@ -98,6 +98,9 @@ data_collection:
     - cpu_load: "--cpu 4"
       gpu_load: ""
       description: "CPU (4 cores)"
+    - cpu_load: "--cpu 6"
+      gpu_load: ""
+      description: "CPU (6 cores)"
     - cpu_load: "--cpu 10"
       gpu_load: ""
       description: "CPU (10 cores)"
@@ -126,7 +129,13 @@ data_collection:
       description: "GPU (100%)"
 
     # Mixed loads
-    - cpu_load: "--cpu 4"
+    - cpu_load: "--cpu 1"
+      gpu_load: "--load 100"
+      description: "ML Training"
+    - cpu_load: "--cpu 2"
+      gpu_load: "--load 100"
+      description: "ML Training"
+    - cpu_load: "--cpu 24"
       gpu_load: "--load 100"
       description: "ML Training"
 
@@ -145,7 +154,7 @@ data_collection:
   # Sampling configuration (two-phase approach)
   # Phase 1: Single fan sweep (optional) - run each fan alone at varying speeds, others at min
   # Phase 2: Contrast sampling (always) - fill in with samples biased toward lower fan speeds
-  num_samples_per_load: 30 # Target number of data points per load level
+  num_samples_per_load: 25 # Target number of data points per load level
 
   # Phase 1: Single Fan Sweep - each fan sweeps through these steps while others at min
   enable_single_fan_sweep: true # Enable/disable Phase 1 (one fan varies, others at min)
@@ -178,7 +187,7 @@ safety:
   # Abort thresholds - stop current test point and abort to next
   abort_cpu_temp: 95.0
   abort_gpu_temp: 80.0
-  abort_cooldown_time: 15 # Seconds to wait at full speed after abort
+  abort_cooldown_time: 20 # Seconds to wait at full speed after abort
 
   # Emergency shutdown limits (fatal)
   emergency_cpu_temp: 100.0
@@ -253,3 +262,12 @@ optimizer:
     maxiter: 100 # Maximum number of iterations
     rhobeg: 10.0 # Initial trust region radius
     tol: 0.5 # Tolerance for constraint violation
+
+# Controller Configuration
+controller:
+  # Target temperatures for the control loop (°C)
+  targets:
+    T_cpu: 75.0  # Target CPU temperature
+    T_gpu: 70.0  # Target GPU temperature
+  # Control loop interval (seconds)
+  interval: 2.0
