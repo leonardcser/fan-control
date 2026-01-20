@@ -14,6 +14,7 @@ class Optimizer:
     def __init__(self, model_path: Path, config: Dict):
         self.model = ThermalModel.load(model_path)
         self.devices = config["devices"]
+        self.optimizer_config = config["optimizer"]
 
         self.pwm_names = list(self.devices.keys())
         self.bounds = self._get_bounds()
@@ -100,12 +101,14 @@ class Optimizer:
             constraints.append({"type": "ineq", "fun": lambda x, i=i, hi=hi: hi - x[i]})
 
         # COBYLA - gradient-free, fewer model calls per iteration
+        method = self.optimizer_config["method"]
+        options = self.optimizer_config["options"]
         result = minimize(
             objective,
             x0,
-            method="COBYLA",
+            method=method,
             constraints=constraints,
-            options={"maxiter": 50, "rhobeg": 10.0, "tol": 0.5},
+            options=options,
         )
 
         # Convert to integer PWM values
