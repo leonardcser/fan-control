@@ -1,0 +1,30 @@
+schema: '2.0'
+stages:
+  preprocess:
+    cmd: python -m fan_control.pipeline.preprocess
+    deps:
+    - path: data/raw
+      hash: md5
+      md5: 6035094ab0150c07af82e0ab34e6034f.dir
+      size: 437713
+      nfiles: 1
+    - path: src/fan_control/pipeline/preprocess.py
+      hash: md5
+      md5: 47f8045c411d22e00b64d3ed4e7626d7
+      size: 3101
+    params:
+      params.yaml:
+        preprocess:
+          min_power:
+            cpu: 10.0
+            gpu: 5.0
+          max_temp:
+            cpu: 95.0
+            gpu: 85.0
+          test_size: 0.2
+    outs:
+    - path: data/processed
+      hash: md5
+      md5: e17a5bdf31b6d7857a8680613c803614.dir
+      size: 404629
+      nfiles: 2

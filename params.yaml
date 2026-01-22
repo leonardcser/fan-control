@@ -69,7 +69,7 @@ optimizer:
 controller:
   # Target temperatures for the control loop (°C)
   targets:
-    T_cpu: 83.0  # Target CPU temperature
-    T_gpu: 60.0  # Target GPU temperature
+    T_cpu: 83.0 # Target CPU temperature
+    T_gpu: 60.0 # Target GPU temperature
   # Control loop interval (seconds)
   interval: 2.0

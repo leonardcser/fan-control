@@ -15,7 +15,7 @@ dependencies = [
     "requests>=2.32.0",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "torch>=2.9.1",
     "dvc>=3.66.1",

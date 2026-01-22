@@ -19,7 +19,7 @@ class Optimizer:
             self.optimizer_config = params["optimizer"]
         else:
             # Fallback for backward compatibility
-            self.optimizer_config = config.get("optimizer", {})
+            self.optimizer_config = config["optimizer"]
 
         self.pwm_names = list(self.devices.keys())
         self.bounds = self._get_bounds()

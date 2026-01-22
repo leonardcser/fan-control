@@ -99,9 +99,9 @@ class ThermalModel:
         logger.info(f"Monotonic Constraints: {cst}")
 
         # Get minimum power thresholds from config
-        min_power_cfg = self.config.get("min_power_threshold", {"cpu": 10.0, "gpu": 10.0})
-        min_cpu_power = min_power_cfg.get("cpu", 10.0)
-        min_gpu_power = min_power_cfg.get("gpu", 10.0)
+        min_power_cfg = self.config["min_power_threshold"]
+        min_cpu_power = min_power_cfg["cpu"]
+        min_gpu_power = min_power_cfg["gpu"]
 
         # --- Train CPU Model ---
         if "T_cpu" in df.columns and "P_cpu" in df.columns:
@@ -211,9 +211,9 @@ def train_model(config: Dict[str, Any], data_path: Path, output_dir: Path):
     ml_config = config["ml_model"]
 
     # Get minimum power thresholds
-    min_power_cfg = ml_config.get("min_power_threshold", {"cpu": 10.0, "gpu": 5.0})
-    min_cpu_power = min_power_cfg.get("cpu", 10.0)
-    min_gpu_power = min_power_cfg.get("gpu", 5.0)
+    min_power_cfg = ml_config["min_power_threshold"]
+    min_cpu_power = min_power_cfg["cpu"]
+    min_gpu_power = min_power_cfg["gpu"]
 
     # Filter out very low power points for training stability
     df = full_df[(full_df["P_cpu"] > min_cpu_power) | (full_df["P_gpu"] > min_gpu_power)].copy()

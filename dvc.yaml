@@ -10,39 +10,39 @@ stages:
       - data/processed:
           cache: false
 
-  train:
-    cmd: python -m fan_control.pipeline.train
-    deps:
-      - data/processed
-      - src/fan_control/pipeline/train.py
-      - src/fan_control/core/train.py
-    params:
-      - model
-    outs:
-      - out/models/thermal_model.pkl
-    metrics:
-      - out/metrics/train_metrics.json:
-          cache: false
-
-  evaluate:
-    cmd: python -m fan_control.pipeline.evaluate
-    deps:
-      - data/processed/val.csv
-      - out/models/thermal_model.pkl
-      - src/fan_control/pipeline/evaluate.py
-      - src/fan_control/core/train.py
-    metrics:
-      - out/metrics/val_metrics.json:
-          cache: false
-
-  simulate:
-    cmd: python -m fan_control.pipeline.simulate
-    deps:
-      - out/models/thermal_model.pkl
-      - src/fan_control/pipeline/simulate.py
-      - src/fan_control/core/simulator.py
-      - src/fan_control/core/train.py
-      - src/fan_control/control/optimizer.py
-    metrics:
-      - out/metrics/sim_metrics.json:
-          cache: false
+  # train:
+  #   cmd: python -m fan_control.pipeline.train
+  #   deps:
+  #     - data/processed
+  #     - src/fan_control/pipeline/train.py
+  #     - src/fan_control/core/train.py
+  #   params:
+  #     - model
+  #   outs:
+  #     - out/models/thermal_model.pkl
+  #   metrics:
+  #     - out/metrics/train_metrics.json:
+  #         cache: false
+  #
+  # evaluate:
+  #   cmd: python -m fan_control.pipeline.evaluate
+  #   deps:
+  #     - data/processed/val.csv
+  #     - out/models/thermal_model.pkl
+  #     - src/fan_control/pipeline/evaluate.py
+  #     - src/fan_control/core/train.py
+  #   metrics:
+  #     - out/metrics/val_metrics.json:
+  #         cache: false
+  #
+  # simulate:
+  #   cmd: python -m fan_control.pipeline.simulate
+  #   deps:
+  #     - out/models/thermal_model.pkl
+  #     - src/fan_control/pipeline/simulate.py
+  #     - src/fan_control/core/simulator.py
+  #     - src/fan_control/core/train.py
+  #     - src/fan_control/control/optimizer.py
+  #   metrics:
+  #     - out/metrics/sim_metrics.json:
+  #         cache: false

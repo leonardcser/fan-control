@@ -25,7 +25,7 @@ if __name__ == "__main__":
         params = yaml.safe_load(f)
 
     # Get ML model configuration from params
-    ml_config = params.get("ml_model", {})
+    ml_config = params["ml_model"]
 
     # Update hyperparameters from params.yaml if provided
     if "model" in params:
