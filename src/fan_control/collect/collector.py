@@ -147,6 +147,7 @@ class DataCollector:
 
         # Phase control configuration
         self.enable_single_fan_sweep = self.data_config["enable_single_fan_sweep"]
+        self.enable_max_fan_sweep = self.data_config["enable_max_fan_sweep"]
 
         # Data storage
         self.measurements: List[MeasurementPoint] = []
@@ -201,7 +202,7 @@ class DataCollector:
         # Run each fan individually at varying speeds (min to max), others at their minimum configured level
         # This identifies each fan's cooling contribution while maintaining baseline cooling
         if self.enable_single_fan_sweep:
-            num_repeats = self.data_config.get("single_fan_sweep_repeats", 1)
+            num_repeats = self.data_config["single_fan_sweep_repeats"]
 
             # First, generate unique points (deduplicated)
             unique_points = []
@@ -231,13 +232,49 @@ class DataCollector:
                         description=description,
                     )
 
+        # === Phase 1b: Max Fan Sweep (Optional) ===
+        # Run each fan individually at varying speeds (max to min), others at their maximum (100%)
+        # This identifies each fan's cooling contribution when other fans provide maximum cooling
+        if self.enable_max_fan_sweep:
+            num_repeats = self.data_config["max_fan_sweep_repeats"]
+            max_sweep_steps = self.data_config["max_fan_sweep_steps"]
+
+            # First, generate unique points (deduplicated)
+            unique_points = []
+            seen_points = set()
+            for sweep_key in device_keys:
+                for step_pct in max_sweep_steps:
+                    pwm_map = {}
+                    for key in device_keys:
+                        if key == sweep_key:
+                            pwm_map[key] = pct_to_pwm(key, step_pct)
+                        else:
+                            # Others at max (100%)
+                            pwm_map[key] = device_ranges[key]["max"]
+
+                    point_tuple = tuple(pwm_map[k] for k in device_keys)
+                    if point_tuple not in seen_points:
+                        seen_points.add(point_tuple)
+                        unique_points.append(pwm_map)
+
+            # Then yield each unique point num_repeats times
+            for _repeat in range(num_repeats):
+                for pwm_map in unique_points:
+                    yield TestPoint(
+                        pwm_values=pwm_map.copy(),
+                        cpu_load_flags=cpu_load_flags,
+                        gpu_load_flags=gpu_load_flags,
+                        cpu_cores=cpu_cores,
+                        description=description,
+                    )
+
         # === Phase 2: Contrast Sampling ===
         # Generate samples with contrast: 1-2 fans high, rest low
         # This ensures we capture each fan's individual contribution
-        contrast_config = self.data_config.get("contrast_sampling", {})
-        num_high_fans_choices = contrast_config.get("num_high_fans", [1, 2])
-        high_range = contrast_config.get("high_range", [60, 100])
-        low_range = contrast_config.get("low_range", [0, 40])
+        contrast_config = self.data_config["contrast_sampling"]
+        num_high_fans_choices = contrast_config["num_high_fans"]
+        high_range = contrast_config["high_range"]
+        low_range = contrast_config["low_range"]
 
         batch_size = self.data_config["num_samples_per_load"]
         batch_num = 0

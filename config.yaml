@@ -157,12 +157,17 @@ data_collection:
   # Sampling configuration (two-phase approach)
   # Phase 1: Single fan sweep (optional) - run each fan alone at varying speeds, others at min
   # Phase 2: Contrast sampling (always) - fill in with samples biased toward lower fan speeds
-  num_samples_per_load: 30 # Target number of data points per load level
+  num_samples_per_load: 50 # Target number of data points per load level
 
   # Phase 1: Single Fan Sweep - each fan sweeps through these steps while others at min
   enable_single_fan_sweep: true # Enable/disable Phase 1 (one fan varies, others at min)
   single_fan_sweep_steps: [100, 60, 20, 0] # Percentages of each fan's range (from pwmX_levels)
   single_fan_sweep_repeats: 2 # Number of times to repeat the sweep (for noise averaging)
+
+  # Phase 1b: Max Fan Sweep - each fan sweeps through steps while others at max (100%)
+  enable_max_fan_sweep: true # Enable/disable Phase 1b (one fan varies, others at max)
+  max_fan_sweep_steps: [100, 60, 20, 0] # Percentages of each fan's range
+  max_fan_sweep_repeats: 2 # Number of times to repeat the sweep
 
   sampling_seed: 42
 
