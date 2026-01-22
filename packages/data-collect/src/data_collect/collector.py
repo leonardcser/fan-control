@@ -124,7 +124,6 @@ class DataCollector:
         self.safety_config = config["safety"]
         self.hw_config = config["hardware"]
         self.devices = config["devices"]
-        self.output_config = config["output"]
         self.load_stabilization_time = self.data_config[
             "load_stabilization_time"
         ]

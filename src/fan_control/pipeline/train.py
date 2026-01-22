@@ -38,7 +38,7 @@ if __name__ == "__main__":
             ml_config["hyperparameters"]["max_depth"] = model_params["max_depth"]
 
     data_dir = Path("data/processed")
-    output_dir = Path("models")
+    output_dir = Path("out/models")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Load processed data
@@ -87,7 +87,7 @@ if __name__ == "__main__":
         logger.info(f"GPU (train): RMSE={rmse_gpu:.2f}°C, R2={r2_gpu:.4f}, MAE={mae_gpu:.2f}°C")
 
     # Save metrics
-    metrics_dir = Path("metrics")
+    metrics_dir = Path("out/metrics")
     metrics_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = metrics_dir / "train_metrics.json"
     with open(metrics_path, "w") as f:

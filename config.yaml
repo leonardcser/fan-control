@@ -218,7 +218,3 @@ safety:
 
   # Never test all fans at minimum simultaneously
   min_total_cooling_effort: 0 # Sum of all PWM percentages must be >= 25%
-
-# Output
-output:
-  directory: "./data"

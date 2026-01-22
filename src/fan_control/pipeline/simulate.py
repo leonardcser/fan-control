@@ -26,8 +26,8 @@ if __name__ == "__main__":
     with open("params.yaml") as f:
         params = yaml.safe_load(f)
 
-    models_dir = Path("models")
-    metrics_dir = Path("metrics")
+    models_dir = Path("out/models")
+    metrics_dir = Path("out/metrics")
     metrics_dir.mkdir(parents=True, exist_ok=True)
 
     # Load model

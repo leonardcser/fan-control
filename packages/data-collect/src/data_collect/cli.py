@@ -65,12 +65,6 @@ def main() -> None:
         default="config.yaml",
         help="Path to configuration file (default: config.yaml)",
     )
-    parser.add_argument(
-        "--output",
-        "-o",
-        type=str,
-        help="Override output directory from config",
-    )
 
     args = parser.parse_args()
 
@@ -91,9 +85,8 @@ def main() -> None:
         print(f"✗ Error parsing config file: {e}")
         sys.exit(1)
 
-    # Override output directory if specified
-    if args.output:
-        cfg["output"]["directory"] = args.output
+    # Set output directory
+    output_directory = "./data/runs"
 
     # Pre-flight checks
     if not check_prerequisites():
@@ -173,7 +166,7 @@ def main() -> None:
         )
 
         # Create output path (drop privileges for file creation)
-        output_dir = Path(cfg["output"]["directory"])
+        output_dir = Path(output_directory)
         with drop_privileges():
             output_dir.mkdir(parents=True, exist_ok=True)
 

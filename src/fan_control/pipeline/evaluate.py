@@ -21,8 +21,8 @@ logging.basicConfig(
 
 if __name__ == "__main__":
     data_dir = Path("data/processed")
-    models_dir = Path("models")
-    metrics_dir = Path("metrics")
+    models_dir = Path("out/models")
+    metrics_dir = Path("out/metrics")
     metrics_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Load validation data
