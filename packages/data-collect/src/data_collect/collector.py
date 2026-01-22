@@ -10,12 +10,11 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from tqdm import tqdm
 
-from ..hardware import HardwareController
-from ..load import LoadOrchestrator
-from ..safety import SafetyMonitor, AbortPointError
+from .hardware import HardwareController
+from .load import LoadOrchestrator
+from .safety import SafetyMonitor, AbortPointError
 from .models import MeasurementPoint, SafetyCheck, TestPoint
-from ..plot.plotting import generate_all_plots
-from ..utils import drop_privileges
+from .utils import drop_privileges
 
 
 def _parse_cpu_cores(cpu_load_flags: str) -> int:
@@ -728,7 +727,7 @@ class DataCollector:
                 total_skipped += skipped_for_load
 
         # Final save
-        self.save_measurements(output_path, generate_plots=False)
+        self.save_measurements(output_path)
 
         # Final summary
         print("\n" + "=" * 80)
@@ -739,22 +738,14 @@ class DataCollector:
         print(f"Skipped/Aborted: {total_skipped}")
         print(f"Total points collected: {len(self.measurements)}")
         print(f"Data saved to: {output_path}")
-
-        if len(self.measurements) >= 2:
-            plots_dir = output_path.parent / "plots"
-            print(f"Plots saved to: {plots_dir}")
-
         print("=" * 80 + "\n")
 
-    def save_measurements(
-        self, output_path: Path, generate_plots: bool = False
-    ) -> None:
+    def save_measurements(self, output_path: Path) -> None:
         """
-        Save measurements to CSV file and generate plots.
+        Save measurements to CSV file.
 
         Args:
             output_path: Path to output CSV file
-            generate_plots: Whether to generate plots (default: False)
         """
         device_keys = list(self.devices.keys())
 
@@ -781,13 +772,3 @@ class DataCollector:
 
                 for measurement in self.measurements:
                     writer.writerow(measurement.to_dict())
-
-        # Generate plots
-        if generate_plots and len(self.measurements) >= 2:
-            plots_dir = output_path.parent / "plots"
-            try:
-                with drop_privileges():
-                    generate_all_plots(output_path, plots_dir, quiet=True)
-            except Exception as e:
-                # Don't fail data collection if plotting fails
-                print(f"  ⚠ Plot generation failed: {e}")

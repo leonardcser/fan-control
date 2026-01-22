@@ -6,6 +6,7 @@ import time
 import signal
 from typing import Optional
 from pathlib import Path
+import importlib.resources
 
 
 class LoadController:
@@ -62,10 +63,17 @@ class GPULoadController(LoadController):
             return True
 
         try:
-            # Get absolute path to the gpu_load.py script
-            # Assuming it's in tools/ relative to the project root
-            root_dir = Path(__file__).parent.parent.parent
-            script_path = root_dir / "tools" / "gpu_load.py"
+            # Get path to bundled gpu_load.py using importlib.resources
+            # For Python 3.9+, use files() API
+            try:
+                from importlib.resources import files
+                tools_path = files('data_collect.tools')
+                script_path = tools_path / 'gpu_load.py'
+            except ImportError:
+                # Fallback for older Python versions (3.7-3.8)
+                import importlib.resources as pkg_resources
+                with pkg_resources.path('data_collect.tools', 'gpu_load.py') as p:
+                    script_path = p
 
             # Split flags into list
             cmd_args = flags.split()

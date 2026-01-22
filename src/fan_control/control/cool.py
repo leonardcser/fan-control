@@ -3,7 +3,8 @@ import time
 import logging
 import yaml
 from pathlib import Path
-from ..hardware import HardwareController
+
+from ..core.hardware import HardwareController
 
 logger = logging.getLogger(__name__)
 

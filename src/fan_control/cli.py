@@ -1,132 +1,96 @@
-"""Command-line interface for thermal data collection."""
+"""
+CLI interface for the fan controller.
+Provides commands: run, cool
+"""
 
 import argparse
+import sys
+import logging
+from pathlib import Path
 
-from dotenv import load_dotenv
-
-from .collect.cli import collect_mode
-from .control.cli import run_mode
+from .control.controller import FanController
 from .control.cool import cool_mode
-from .control.validate import validate_mode
-from .train.cli import train_mode
+
+# Configure logging to stdout
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
 
 
-def main() -> None:
-    """Main entry point."""
-    load_dotenv()
+def run_command(args) -> None:
+    """
+    Run the fan controller loop.
+    """
+    print("\n" + "=" * 70)
+    print("FAN CONTROL - OPTIMIZER LOOP")
+    print("=" * 70 + "\n")
+
+    config_path = Path(args.config)
+    run_dir = Path(args.run)
+
+    # Locate model file
+    model_path = run_dir / "fit" / "thermal_model.pkl"
+
+    if not model_path.exists():
+        print(f"✗ Model not found at: {model_path}")
+        print("  Please run 'fan-control run' with a valid model path first.")
+        sys.exit(1)
+
+    print(f"Config: {config_path}")
+    print(f"Model: {model_path}")
+    print("\nStarting controller... (Press Ctrl+C to stop)")
+
+    try:
+        controller = FanController(config_path, model_path)
+        controller.start()
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        print(f"\n✗ Fatal error: {e}")
+        sys.exit(1)
+
+
+def main():
+    """Main CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="Thermal Data Collector for Physics-Based Fan Optimization",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Example usage:
-  # Collect thermal data using default config
-  sudo fan-control collect --config config.yaml
-
-  # Reproduce ML pipeline (plot, fit, simulate)
-  fan-control repro --config config.yaml --run data/fan_control_20260119_040722
-
-  # Run the optimized fan controller
-  sudo fan-control run --config config.yaml --run data/fan_control_20260119_040722
-
-  # Validate model predictions against real temps (generates plots on Ctrl+C)
-  sudo fan-control validate --config config.yaml --run data/fan_control_20260119_040722
-
-  # Cool down the system
-  sudo fan-control cool --config config.yaml
-        """,
+        description="Fan controller for thermal optimization",
+        prog="fan-control",
     )
 
-    subparsers = parser.add_subparsers(
-        dest="command", help="Command to run", required=True
-    )
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
-    # Collect subcommand
-    collect_parser = subparsers.add_parser(
-        "collect",
-        help="Collect thermal data for model fitting",
-    )
-    collect_parser.add_argument(
-        "--config",
-        default="config.yaml",
-        help="Path to configuration YAML file (default: config.yaml)",
-    )
-    collect_parser.add_argument(
-        "--output",
-        help="Override output directory from config",
-    )
-
-
-    # Run subcommand
-    run_parser = subparsers.add_parser(
-        "run",
-        help="Run the optimized fan controller loop",
-    )
+    # run command
+    run_parser = subparsers.add_parser("run", help="Run the fan controller optimizer")
     run_parser.add_argument(
         "--config",
-        default="config.yaml",
-        help="Path to configuration YAML file (default: config.yaml)",
+        required=True,
+        help="Path to config.yaml",
     )
     run_parser.add_argument(
         "--run",
         required=True,
-        help="Path to run directory containing the trained model",
+        help="Path to run directory containing fit/thermal_model.pkl",
     )
+    run_parser.set_defaults(func=run_command)
 
-    # Cool subcommand
-    cool_parser = subparsers.add_parser(
-        "cool",
-        help="Set all fans to max speed to cool down the system",
-    )
+    # cool command
+    cool_parser = subparsers.add_parser("cool", help="Set all fans to 100%")
     cool_parser.add_argument(
         "--config",
-        default="config.yaml",
-        help="Path to configuration YAML file (default: config.yaml)",
-    )
-
-    # Repro subcommand (unified ML pipeline: plot, fit, simulate)
-    repro_parser = subparsers.add_parser(
-        "repro",
-        help="Reproduce ML pipeline (generate plots, fit model, simulate controller)",
-    )
-    repro_parser.add_argument(
-        "--config",
-        default="config.yaml",
-        help="Path to configuration YAML file (default: config.yaml)",
-    )
-    repro_parser.add_argument(
-        "--run",
         required=True,
-        help="Path to run directory containing collected CSV data",
+        help="Path to config.yaml",
     )
-
-    # Validate subcommand
-    validate_parser = subparsers.add_parser(
-        "validate",
-        help="Run controller and log predicted vs actual temps for model validation",
-    )
-    validate_parser.add_argument(
-        "--config",
-        default="config.yaml",
-        help="Path to configuration YAML file (default: config.yaml)",
-    )
-    validate_parser.add_argument(
-        "--run",
-        required=True,
-        help="Path to run directory containing the trained model",
-    )
+    cool_parser.set_defaults(func=cool_mode)
 
     args = parser.parse_args()
 
-    if args.command == "collect":
-        collect_mode(args)
-    elif args.command == "repro":
-        train_mode(args)
-    elif args.command == "run":
-        run_mode(args)
-    elif args.command == "cool":
-        cool_mode(args)
-    elif args.command == "validate":
-        validate_mode(args)
+    if not hasattr(args, "func"):
+        parser.print_help()
+        sys.exit(1)
+
+    args.func(args)
 
 
 if __name__ == "__main__":

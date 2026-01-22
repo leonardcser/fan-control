@@ -1,0 +1,22 @@
+[project]
+name = "data-collect"
+version = "0.1.0"
+description = "Thermal data collection for fan optimization"
+authors = [
+    { name = "leonardcser", email = "73912641+leonardcser@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.4.1",
+    "pyyaml>=6.0.3",
+    "requests>=2.32.0",
+    "python-dotenv>=1.2.1",
+    "tqdm>=4.67.1",
+]
+
+[project.scripts]
+data-collect = "data_collect.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.9.26,<0.10.0"]
+build-backend = "uv_build"

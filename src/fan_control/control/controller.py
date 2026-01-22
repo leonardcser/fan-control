@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, Optional
 import yaml
 
-from ..hardware import HardwareController
+from ..core.hardware import HardwareController
 from .optimizer import Optimizer
 
 logger = logging.getLogger(__name__)
@@ -21,9 +21,14 @@ class FanController:
     def __init__(self, config_path: Path, model_path: Path):
         self.running = False
 
-        # Load Config
+        # Load hardware config
         with open(config_path) as f:
             self.config = yaml.safe_load(f)
+
+        # Load params (controller targets, optimizer settings)
+        params_path = config_path.parent / "params.yaml"
+        with open(params_path) as f:
+            self.params = yaml.safe_load(f)
 
         # Initialize Hardware
         hw_cfg = self.config["hardware"]
@@ -35,11 +40,11 @@ class FanController:
         )
 
         # Initialize Optimizer
-        self.optimizer = Optimizer(model_path, self.config)
+        self.optimizer = Optimizer(model_path, self.config, self.params)
 
-        # Load targets and interval from config
-        self.targets = self.config["controller"]["targets"]
-        self.interval = self.config["controller"]["interval"]
+        # Load targets and interval from params
+        self.targets = self.params["controller"]["targets"]
+        self.interval = self.params["controller"]["interval"]
 
         # State tracking for optimization continuity
         self.last_pwms = {name: 50.0 for name in self.optimizer.pwm_names}
@@ -110,8 +115,6 @@ class FanController:
                 "T_amb": self.hw.get_ambient_temp() or 25.0,  # Fallback to 25C
                 "T_cpu": self.hw.get_cpu_temp(),
                 "T_gpu": self.hw.get_gpu_temp(),
-                # We need current PWMs? Not strictly for the optimizer,
-                # but good for logging. The optimizer builds its own DataFrame.
             }
         except Exception as e:
             logger.error(f"Sensor read error: {e}")

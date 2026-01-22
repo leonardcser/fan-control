@@ -1,0 +1,75 @@
+# DVC Pipeline Parameters
+# This file contains all tunable parameters for the ML pipeline
+
+# Preprocessing parameters
+preprocess:
+  min_power:
+    cpu: 10.0
+    gpu: 5.0
+  max_temp:
+    cpu: 95.0
+    gpu: 85.0
+  test_size: 0.2
+
+# Model training parameters
+model:
+  n_estimators: 200
+  learning_rate: 0.05
+  max_depth: 8
+
+# ML Model Configuration
+# Uses Gradient Boosting Regressor (sklearn) instead of physics equations.
+# This handles complex non-linearities and regime shifts (e.g. 6-core vs 24-core heat density).
+ml_model:
+  type: "gradient_boosting"
+
+  # Features to use for prediction
+  features:
+    - P_cpu
+    - P_gpu
+    - T_amb
+    - pwm2
+    - pwm4
+    - pwm5
+    # - pwm7
+
+  # Hyperparameters for GradientBoostingRegressor
+  hyperparameters:
+    n_estimators: 200
+    learning_rate: 0.05
+    max_depth: 8
+    random_state: 42
+
+  # Targets to train models for
+  targets:
+    - T_cpu
+    - T_gpu
+
+  # Filter out thermally-saturated data during training
+  # When temps exceed these thresholds, fans appear ineffective due to throttling
+  thermal_saturation_filter:
+    max_cpu_temp: 95.0 # Filter out T_cpu >= this (°C)
+    max_gpu_temp: 85.0 # Filter out T_gpu >= this (°C)
+
+  # Minimum power thresholds for training
+  # Filter out low-power samples to avoid training on idle/noise data
+  min_power_threshold:
+    cpu: 10.0 # Only train CPU model on samples with P_cpu > this (W)
+    gpu: 5.0 # Only train GPU model on samples with P_gpu > this (W)
+
+# Optimizer Configuration
+optimizer:
+  method: "COBYLA"
+  options:
+    maxiter: 200 # Maximum number of iterations
+    rhobeg: 15.0 # Initial trust region radius
+    tol: 0.5 # Tolerance for constraint violation
+
+# Controller Configuration
+controller:
+  # Target temperatures for the control loop (°C)
+  targets:
+    T_cpu: 83.0  # Target CPU temperature
+    T_gpu: 60.0  # Target GPU temperature
+  # Control loop interval (seconds)
+  interval: 2.0

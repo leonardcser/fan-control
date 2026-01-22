@@ -1,5 +1,6 @@
 """Command-line interface for thermal data collection."""
 
+import argparse
 import os
 import sys
 import shutil
@@ -7,12 +8,13 @@ from datetime import datetime
 from pathlib import Path
 
 import yaml
+from dotenv import load_dotenv
 
 from .collector import DataCollector
-from ..hardware import HardwareController
-from ..load import LoadOrchestrator
-from ..safety import SafetyMonitor, SafetyError
-from ..utils import drop_privileges
+from .hardware import HardwareController
+from .load import LoadOrchestrator
+from .safety import SafetyMonitor, SafetyError
+from .utils import drop_privileges
 
 
 def check_prerequisites() -> bool:
@@ -48,8 +50,30 @@ def check_prerequisites() -> bool:
     return checks_passed
 
 
-def collect_mode(args) -> None:
-    """Data collection mode - collect thermal measurements."""
+def main() -> None:
+    """Main entry point for data-collect CLI."""
+    load_dotenv()
+
+    parser = argparse.ArgumentParser(
+        description="Thermal data collection for fan optimization",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--config",
+        "-c",
+        type=str,
+        default="config.yaml",
+        help="Path to configuration file (default: config.yaml)",
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        type=str,
+        help="Override output directory from config",
+    )
+
+    args = parser.parse_args()
+
     print("\n" + "=" * 80)
     print("THERMAL DATA COLLECTION")
     print("=" * 80 + "\n")
@@ -68,7 +92,7 @@ def collect_mode(args) -> None:
         sys.exit(1)
 
     # Override output directory if specified
-    if hasattr(args, "output") and args.output:
+    if args.output:
         cfg["output"]["directory"] = args.output
 
     # Pre-flight checks
@@ -194,3 +218,7 @@ def collect_mode(args) -> None:
         print("Restoring auto fan control...")
         for pwm_num in device_pwms.values():
             hardware.set_pwm_mode(pwm_num, 5)
+
+
+if __name__ == "__main__":
+    main()

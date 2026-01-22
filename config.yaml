@@ -1,7 +1,7 @@
-# Physics-Based Fan Optimization - Data Collection Configuration
+# Fan Optimization - Hardware and Data Collection Configuration
 #
-# This configuration is used to collect steady-state measurements for fitting
-# the thermal model parameters described in PHYSICS_MODEL.md
+# This configuration contains hardware-specific settings and data collection parameters.
+# Model training and optimization parameters are in params.yaml
 
 # Control devices
 devices:
@@ -32,6 +32,25 @@ devices:
   #   description: "AIO pump (coolant circulation)"
   #   min_pwm: 40 # Minimum PWM value (from data collection)
   #   stall_pwm: 40 # PWM below which pump stalls
+
+# Hardware parameters
+hardware:
+  hwmon_device_name: "nct6799"
+  cpu_sensor_name: "k10temp-pci-00c3"
+  cpu_sensor_label: "Tctl:"
+
+  # Timeouts and delays
+  command_timeout: 5
+  ambient_timeout: 300
+  retry_delay: 0.1
+  max_retries: 3
+
+# Ambient temperature (optional but recommended for accurate model)
+ambient:
+  source: "home-assistant" # Options: home-assistant, null (to disable)
+  ha_url: "http://ha.pi.lan"
+  ha_entity_id: "sensor.ewelink_snzb_02p_temperature_2"
+  ha_token_env: "HA_TOKEN"
 
 # Plot configuration
 # Specify which fans to use for specific plots and their relationships
@@ -178,18 +197,6 @@ data_collection:
     high_range: [60, 100] # High fans sample uniformly from this % range
     low_range: [0, 40] # Low fans sample (beta-biased toward low end) from this % range
 
-# Hardware parameters
-hardware:
-  hwmon_device_name: "nct6799"
-  cpu_sensor_name: "k10temp-pci-00c3"
-  cpu_sensor_label: "Tctl:"
-
-  # Timeouts and delays
-  command_timeout: 5
-  ambient_timeout: 300
-  retry_delay: 0.1
-  max_retries: 3
-
 # Safety limits - abort data point and restore safe speeds if exceeded
 safety:
   # Abort thresholds - stop current test point and abort to next
@@ -212,70 +219,6 @@ safety:
   # Never test all fans at minimum simultaneously
   min_total_cooling_effort: 0 # Sum of all PWM percentages must be >= 25%
 
-# Ambient temperature (optional but recommended for accurate model)
-ambient:
-  source: "home-assistant" # Options: home-assistant, null (to disable)
-  ha_url: "http://ha.pi.lan"
-  ha_entity_id: "sensor.ewelink_snzb_02p_temperature_2"
-  ha_token_env: "HA_TOKEN"
-
 # Output
 output:
   directory: "./data"
-
-# ML Model Configuration
-# Uses Gradient Boosting Regressor (sklearn) instead of physics equations.
-# This handles complex non-linearities and regime shifts (e.g. 6-core vs 24-core heat density).
-ml_model:
-  type: "gradient_boosting"
-
-  # Features to use for prediction
-  features:
-    - P_cpu
-    - P_gpu
-    - T_amb
-    - pwm2
-    - pwm4
-    - pwm5
-    # - pwm7
-
-  # Hyperparameters for GradientBoostingRegressor
-  hyperparameters:
-    n_estimators: 200
-    learning_rate: 0.05
-    max_depth: 8
-    random_state: 42
-
-  # Targets to train models for
-  targets:
-    - T_cpu
-    - T_gpu
-
-  # Filter out thermally-saturated data during training
-  # When temps exceed these thresholds, fans appear ineffective due to throttling
-  thermal_saturation_filter:
-    max_cpu_temp: 95.0 # Filter out T_cpu >= this (°C)
-    max_gpu_temp: 85.0 # Filter out T_gpu >= this (°C)
-
-  # Minimum power thresholds for training
-  # Filter out low-power samples to avoid training on idle/noise data
-  min_power_threshold:
-    cpu: 10.0 # Only train CPU model on samples with P_cpu > this (W)
-    gpu: 5.0 # Only train GPU model on samples with P_gpu > this (W)
-
-# Optimizer Configuration
-optimizer:
-  method: "COBYLA"
-  options:
-    maxiter: 200 # Maximum number of iterations
-    rhobeg: 15.0 # Initial trust region radius
-    tol: 0.5 # Tolerance for constraint violation
-
-# Controller Configuration
-controller:
-  # Target temperatures for the control loop (°C)
-  targets:
-    T_cpu: 83.0  # Target CPU temperature
-    T_gpu: 60.0  # Target GPU temperature
-  # Control loop interval (seconds)
-  interval: 2.0

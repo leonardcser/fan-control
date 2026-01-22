@@ -1,9 +1,7 @@
 """
-Control module for runtime fan optimization.
+Control module for optimization logic.
 """
 
-from .cli import run_mode
-from .controller import FanController
 from .optimizer import Optimizer
 
-__all__ = ["run_mode", "FanController", "Optimizer"]
+__all__ = ["Optimizer"]

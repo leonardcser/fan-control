@@ -8,7 +8,7 @@ from typing import Dict, List
 import logging
 
 from ..control.optimizer import Optimizer
-from ..fit.train import ThermalModel
+from .train import ThermalModel
 
 logger = logging.getLogger(__name__)
 
@@ -16,15 +16,15 @@ logger = logging.getLogger(__name__)
 FAN_COLORS = ["blue", "green", "purple", "cyan", "orange", "red", "brown", "pink"]
 
 
-def run_simulation(model_path: Path, config: Dict, output_dir: Path):
+def run_simulation(model_path: Path, config: Dict, params: Dict, output_dir: Path):
     """
     Run a simulation of the optimizer against increasing loads.
     """
     # Create optimizer
-    optimizer = Optimizer(model_path, config)
+    optimizer = Optimizer(model_path, config, params)
 
-    # Load targets from controller config
-    targets = config["controller"]["targets"]
+    # Load targets from params
+    targets = params["controller"]["targets"]
 
     # Generate Synthetic Scenario (0 to 100 seconds/steps)
     # Scenario:

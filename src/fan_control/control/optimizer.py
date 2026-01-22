@@ -2,7 +2,7 @@ import numpy as np
 from scipy.optimize import minimize
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
-from ..fit.train import ThermalModel
+from ..core.train import ThermalModel
 
 
 class Optimizer:
@@ -11,10 +11,15 @@ class Optimizer:
     Uses COBYLA with cached numpy predictions for performance.
     """
 
-    def __init__(self, model_path: Path, config: Dict):
+    def __init__(self, model_path: Path, config: Dict, params: Optional[Dict] = None):
         self.model = ThermalModel.load(model_path)
         self.devices = config["devices"]
-        self.optimizer_config = config["optimizer"]
+        # Optimizer config is in params.yaml
+        if params:
+            self.optimizer_config = params["optimizer"]
+        else:
+            # Fallback for backward compatibility
+            self.optimizer_config = config.get("optimizer", {})
 
         self.pwm_names = list(self.devices.keys())
         self.bounds = self._get_bounds()
