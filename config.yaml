@@ -107,6 +107,9 @@ data_collection:
     - cpu_load: "--cpu 16"
       gpu_load: ""
       description: "CPU (16 cores)"
+    - cpu_load: "--cpu 24"
+      gpu_load: ""
+      description: "CPU (24 cores)"
 
     # GPU focused loads
     - cpu_load: ""
@@ -154,7 +157,7 @@ data_collection:
   # Sampling configuration (two-phase approach)
   # Phase 1: Single fan sweep (optional) - run each fan alone at varying speeds, others at min
   # Phase 2: Contrast sampling (always) - fill in with samples biased toward lower fan speeds
-  num_samples_per_load: 25 # Target number of data points per load level
+  num_samples_per_load: 30 # Target number of data points per load level
 
   # Phase 1: Single Fan Sweep - each fan sweeps through these steps while others at min
   enable_single_fan_sweep: true # Enable/disable Phase 1 (one fan varies, others at min)

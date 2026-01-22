@@ -19,11 +19,10 @@ class MeasurementPoint:
     pwm_values: dict[str, int]  # Map: {"pwm2": 128, "pwm4": 100, ...}
 
     # Power measurements (Watts)
-    P_cpu: float  # CPU power draw
+    P_cpu: float  # CPU package power draw
     P_gpu: float  # GPU power draw
 
     # Temperature measurements (°C)
-    T_amb: Optional[float]  # Ambient temperature
     T_cpu: float  # CPU temperature
     T_gpu: float  # GPU temperature
 
@@ -34,6 +33,14 @@ class MeasurementPoint:
 
     # Metadata
     stabilization_time: float  # Time waited for equilibrium (seconds)
+
+    # Optional fields with defaults
+    P_cpu_cores: Optional[dict[int, float]] = None  # Per-core power: {core_num: watts}
+    cpu_avg_mhz: Optional[dict[int, float]] = None  # Per-core avg frequency: {core_num: MHz}
+    cpu_bzy_mhz: Optional[dict[int, float]] = None  # Per-core busy frequency: {core_num: MHz}
+    cpu_busy_pct: Optional[dict[int, float]] = None  # Per-core busy %: {core_num: percent}
+    T_amb: Optional[float] = None  # Ambient temperature
+    gpu_fan_speed: Optional[int] = None  # GPU fan speed (percentage)
 
     # Equilibration tracking
     equilibrated: bool = True  # Was equilibrium reached?
@@ -52,6 +59,7 @@ class MeasurementPoint:
             "T_amb": self.T_amb,
             "T_cpu": self.T_cpu,
             "T_gpu": self.T_gpu,
+            "gpu_fan_speed": self.gpu_fan_speed,
             "cpu_load_flags": self.cpu_load_flags,
             "gpu_load_flags": self.gpu_load_flags,
             "cpu_cores": self.cpu_cores,
@@ -61,11 +69,41 @@ class MeasurementPoint:
             "description": self.description,
         }
         d.update(self.pwm_values)
+
+        # Add per-core power columns
+        if self.P_cpu_cores:
+            for core_num, power in self.P_cpu_cores.items():
+                d[f"P_cpu_core{core_num}"] = power
+
+        # Add per-core frequency columns
+        if self.cpu_avg_mhz:
+            for core_num, freq in self.cpu_avg_mhz.items():
+                d[f"cpu_avg_mhz_core{core_num}"] = freq
+
+        if self.cpu_bzy_mhz:
+            for core_num, freq in self.cpu_bzy_mhz.items():
+                d[f"cpu_bzy_mhz_core{core_num}"] = freq
+
+        if self.cpu_busy_pct:
+            for core_num, pct in self.cpu_busy_pct.items():
+                d[f"cpu_busy_pct_core{core_num}"] = pct
+
         return d
 
     @staticmethod
-    def csv_header(device_keys: list[str]) -> list[str]:
-        """Get CSV header columns."""
+    def csv_header(device_keys: list[str], num_cores: int = 12) -> list[str]:
+        """Get CSV header columns.
+
+        Args:
+            device_keys: List of device IDs (e.g., ["pwm2", "pwm4"])
+            num_cores: Number of CPU cores for per-core columns (default: 12)
+        """
+        # Generate per-core column names
+        core_power_cols = [f"P_cpu_core{i}" for i in range(num_cores)]
+        core_avg_mhz_cols = [f"cpu_avg_mhz_core{i}" for i in range(num_cores)]
+        core_bzy_mhz_cols = [f"cpu_bzy_mhz_core{i}" for i in range(num_cores)]
+        core_busy_pct_cols = [f"cpu_busy_pct_core{i}" for i in range(num_cores)]
+
         return (
             [
                 "timestamp",
@@ -74,9 +112,16 @@ class MeasurementPoint:
             + [
                 "P_cpu",
                 "P_gpu",
+            ]
+            + core_power_cols
+            + core_avg_mhz_cols
+            + core_bzy_mhz_cols
+            + core_busy_pct_cols
+            + [
                 "T_amb",
                 "T_cpu",
                 "T_gpu",
+                "gpu_fan_speed",
                 "cpu_load_flags",
                 "gpu_load_flags",
                 "cpu_cores",

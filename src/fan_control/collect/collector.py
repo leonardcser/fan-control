@@ -357,7 +357,8 @@ class DataCollector:
         sample_interval = self.data_config["sample_interval"]
 
         # Measure power
-        cpu_power = self.hardware.get_cpu_power()
+        cpu_power_data = self.hardware.get_cpu_power()
+        cpu_power = cpu_power_data['package'] if cpu_power_data else None
         gpu_power = self.hardware.get_gpu_power()
 
         # Safety check with current power
@@ -386,7 +387,9 @@ class DataCollector:
             "cpu_temps": [],
             "gpu_temps": [],
             "cpu_powers": [],
+            "cpu_core_metrics": [],  # List of dicts with per-core metrics, one per sample
             "gpu_powers": [],
+            "gpu_fan_speeds": [],
             "ambient_temps": [],
         }
 
@@ -394,8 +397,18 @@ class DataCollector:
         for _ in range(num_samples):
             measurements["cpu_temps"].append(self.hardware.get_cpu_temp())
             measurements["gpu_temps"].append(self.hardware.get_gpu_temp())
-            measurements["cpu_powers"].append(self.hardware.get_cpu_power())
+
+            # Get CPU power and performance metrics (package and per-core)
+            cpu_power_data = self.hardware.get_cpu_power()
+            if cpu_power_data:
+                measurements["cpu_powers"].append(cpu_power_data['package'])
+                measurements["cpu_core_metrics"].append(cpu_power_data['cores'])
+            else:
+                measurements["cpu_powers"].append(None)
+                measurements["cpu_core_metrics"].append(None)
+
             measurements["gpu_powers"].append(self.hardware.get_gpu_power())
+            measurements["gpu_fan_speeds"].append(self.hardware.get_gpu_fan_speed())
             measurements["ambient_temps"].append(self.hardware.get_ambient_temp())
 
             time.sleep(sample_interval)
@@ -416,6 +429,58 @@ class DataCollector:
         ambient_temps = [t for t in measurements["ambient_temps"] if t is not None]
         ambient_temp_avg = float(np.nanmean(ambient_temps)) if ambient_temps else None
 
+        # Average GPU fan speed
+        gpu_fan_speeds = [s for s in measurements["gpu_fan_speeds"] if s is not None]
+        gpu_fan_speed_avg = int(round(np.nanmean(gpu_fan_speeds))) if gpu_fan_speeds else None
+
+        # Average per-core metrics
+        cpu_core_power_avg = None
+        cpu_avg_mhz_avg = None
+        cpu_bzy_mhz_avg = None
+        cpu_busy_pct_avg = None
+
+        valid_core_samples = [cm for cm in measurements["cpu_core_metrics"] if cm is not None]
+        if valid_core_samples:
+            # Aggregate all core measurements across samples
+            core_power_sums = {}
+            core_avg_mhz_sums = {}
+            core_bzy_mhz_sums = {}
+            core_busy_pct_sums = {}
+            core_counts = {}
+
+            for sample in valid_core_samples:
+                for core_num, metrics in sample.items():
+                    if core_num not in core_counts:
+                        core_power_sums[core_num] = 0
+                        core_avg_mhz_sums[core_num] = 0
+                        core_bzy_mhz_sums[core_num] = 0
+                        core_busy_pct_sums[core_num] = 0
+                        core_counts[core_num] = 0
+
+                    core_power_sums[core_num] += metrics['power']
+                    core_avg_mhz_sums[core_num] += metrics['avg_mhz']
+                    core_bzy_mhz_sums[core_num] += metrics['bzy_mhz']
+                    core_busy_pct_sums[core_num] += metrics['busy_pct']
+                    core_counts[core_num] += 1
+
+            # Calculate averages
+            cpu_core_power_avg = {
+                core_num: core_power_sums[core_num] / core_counts[core_num]
+                for core_num in core_counts
+            }
+            cpu_avg_mhz_avg = {
+                core_num: core_avg_mhz_sums[core_num] / core_counts[core_num]
+                for core_num in core_counts
+            }
+            cpu_bzy_mhz_avg = {
+                core_num: core_bzy_mhz_sums[core_num] / core_counts[core_num]
+                for core_num in core_counts
+            }
+            cpu_busy_pct_avg = {
+                core_num: core_busy_pct_sums[core_num] / core_counts[core_num]
+                for core_num in core_counts
+            }
+
         # Convert PWM percentage to 0-255 for storage
         pwm_values_raw = {
             k: int(round(v * 255 / 100)) for k, v in point.pwm_values.items()
@@ -427,13 +492,18 @@ class DataCollector:
             pwm_values=pwm_values_raw,
             P_cpu=cpu_power_avg,
             P_gpu=gpu_power_avg,
-            T_amb=ambient_temp_avg,
             T_cpu=cpu_temp_avg,
             T_gpu=gpu_temp_avg,
             cpu_load_flags=point.cpu_load_flags,
             gpu_load_flags=point.gpu_load_flags,
             cpu_cores=point.cpu_cores,
             stabilization_time=actual_stabilization_time,
+            P_cpu_cores=cpu_core_power_avg,
+            cpu_avg_mhz=cpu_avg_mhz_avg,
+            cpu_bzy_mhz=cpu_bzy_mhz_avg,
+            cpu_busy_pct=cpu_busy_pct_avg,
+            T_amb=ambient_temp_avg,
+            gpu_fan_speed=gpu_fan_speed_avg,
             equilibrated=eq_info["equilibrated"],
             equilibration_reason=eq_info.get("reason"),
             description=point.description,
@@ -651,13 +721,24 @@ class DataCollector:
         """
         device_keys = list(self.devices.keys())
 
+        # Determine number of cores from measurements
+        num_cores = 12  # default
+        for measurement in self.measurements:
+            # Check any of the per-core fields to determine core count
+            if measurement.P_cpu_cores:
+                num_cores = max(measurement.P_cpu_cores.keys()) + 1
+                break
+            elif measurement.cpu_avg_mhz:
+                num_cores = max(measurement.cpu_avg_mhz.keys()) + 1
+                break
+
         # Save CSV (drop privileges to ensure proper ownership)
         with drop_privileges():
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
             with open(output_path, "w", newline="") as f:
                 writer = csv.DictWriter(
-                    f, fieldnames=MeasurementPoint.csv_header(device_keys)
+                    f, fieldnames=MeasurementPoint.csv_header(device_keys, num_cores)
                 )
                 writer.writeheader()
 
