@@ -5,13 +5,13 @@ stages:
     deps:
     - path: data/raw
       hash: md5
-      md5: f8c7dc7210302fdbefd765c03a409155.dir
-      size: 475660
+      md5: d9fd6d3e89fc6f31f482c14fff29f173.dir
+      size: 284750
       nfiles: 1
     - path: src/fan_control/pipeline/preprocess.py
       hash: md5
-      md5: d5809b74f08acb6b31defbd883b760ec
-      size: 8941
+      md5: d02b6d0e4f0513e5dc7e69b90792e3ca
+      size: 17057
     params:
       params.yaml:
         preprocess:
@@ -25,9 +25,9 @@ stages:
     outs:
     - path: data/processed
       hash: md5
-      md5: 113b94ab76e39b6cf0ba5ef97347aea0.dir
-      size: 2143674
-      nfiles: 8
+      md5: 7f23e70e19435aaeb58857143ef32197.dir
+      size: 2095667
+      nfiles: 11
   train:
     cmd: python -m fan_control.pipeline.train
     deps:
