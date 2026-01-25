@@ -16,45 +16,38 @@ from typing import Any, Dict, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-try:
-    import torch
-    import gpytorch
-    from gpytorch.models import ExactGP
-    from gpytorch.means import ConstantMean
-    from gpytorch.kernels import ScaleKernel, RBFKernel
-    from gpytorch.likelihoods import GaussianLikelihood
-    from gpytorch.distributions import MultivariateNormal
-    from gpytorch.mlls import ExactMarginalLogLikelihood
+import torch
+import gpytorch
+from gpytorch.models import ExactGP
+from gpytorch.means import ConstantMean
+from gpytorch.kernels import ScaleKernel, RBFKernel
+from gpytorch.likelihoods import GaussianLikelihood
+from gpytorch.distributions import MultivariateNormal
+from gpytorch.mlls import ExactMarginalLogLikelihood
 
-    GPYTORCH_AVAILABLE = True
-
-    class ThermalGP(ExactGP):
-        """
-        Exact Gaussian Process for thermal dynamics.
-
-        Uses RBF kernel with automatic relevance determination (ARD).
-        """
-
-        def __init__(self, train_x, train_y, likelihood, input_dim: int):
-            super().__init__(train_x, train_y, likelihood)
-            self.mean_module = ConstantMean()
-            self.covar_module = ScaleKernel(
-                RBFKernel(ard_num_dims=input_dim)
-            )
-
-        def forward(self, x) -> MultivariateNormal:
-            mean_x = self.mean_module(x)
-            covar_x = self.covar_module(x)
-            return MultivariateNormal(mean_x, covar_x)
-
-except ImportError:
-    GPYTORCH_AVAILABLE = False
-    ThermalGP = None  # type: ignore
 
 from . import register_model
 from .base import DynamicThermalModel
 
 logger = logging.getLogger(__name__)
+
+
+class ThermalGP(ExactGP):
+    """
+    Exact Gaussian Process for thermal dynamics.
+
+    Uses RBF kernel with automatic relevance determination (ARD).
+    """
+
+    def __init__(self, train_x, train_y, likelihood, input_dim: int):
+        super().__init__(train_x, train_y, likelihood)
+        self.mean_module = ConstantMean()
+        self.covar_module = ScaleKernel(RBFKernel(ard_num_dims=input_dim))
+
+    def forward(self, x) -> MultivariateNormal:
+        mean_x = self.mean_module(x)
+        covar_x = self.covar_module(x)
+        return MultivariateNormal(mean_x, covar_x)
 
 
 @register_model("gp")
@@ -67,11 +60,6 @@ class GaussianProcessModel(DynamicThermalModel):
     """
 
     def __init__(self, config: Dict[str, Any]):
-        if not GPYTORCH_AVAILABLE:
-            raise ImportError(
-                "GPyTorch is required for GP model. Install with: pip install gpytorch"
-            )
-
         super().__init__(config)
 
         # GP-specific config
@@ -80,8 +68,11 @@ class GaussianProcessModel(DynamicThermalModel):
         self.learning_rate = gp_config["learning_rate"]
         self.max_train_samples = gp_config["max_train_samples"]
 
-        # Device
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Device - GPyTorch requires CPU on macOS (MPS lacks linalg_qr support)
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        else:
+            self.device = torch.device("cpu")
 
         # Input: [T_cpu, T_gpu, pwm2, pwm4, pwm5, P_cpu, P_gpu, T_amb]
         self.input_dim = 8
@@ -134,7 +125,9 @@ class GaussianProcessModel(DynamicThermalModel):
             optimizer.step()
 
             if (i + 1) % 25 == 0:
-                logger.debug(f"{name} GP iter {i+1}/{self.training_iter}, loss={loss.item():.4f}")
+                logger.debug(
+                    f"{name} GP iter {i + 1}/{self.training_iter}, loss={loss.item():.4f}"
+                )
 
         model.eval()
         likelihood.eval()
@@ -153,10 +146,14 @@ class GaussianProcessModel(DynamicThermalModel):
         # Subsample if too large (GP is O(n^3))
         if len(df) > self.max_train_samples:
             df = df.sample(n=self.max_train_samples, random_state=42)
-            logger.info(f"Subsampled to {self.max_train_samples} points for GP training")
+            logger.info(
+                f"Subsampled to {self.max_train_samples} points for GP training"
+            )
 
         # Extract features
-        X = df[["T_cpu", "T_gpu", "pwm2", "pwm4", "pwm5", "P_cpu", "P_gpu", "T_amb"]].values
+        X = df[
+            ["T_cpu", "T_gpu", "pwm2", "pwm4", "pwm5", "P_cpu", "P_gpu", "T_amb"]
+        ].values
         y_cpu = df["T_cpu_next"].values
         y_gpu = df["T_gpu_next"].values
 
@@ -301,31 +298,44 @@ class GaussianProcessModel(DynamicThermalModel):
 
         # Save model states
         if self.cpu_model:
-            torch.save({
-                "model_state": self.cpu_model.state_dict(),
-                "likelihood_state": self.cpu_likelihood.state_dict(),
-            }, path / "cpu_gp.pt")
+            torch.save(
+                {
+                    "model_state": self.cpu_model.state_dict(),
+                    "likelihood_state": self.cpu_likelihood.state_dict(),
+                },
+                path / "cpu_gp.pt",
+            )
 
         if self.gpu_model:
-            torch.save({
-                "model_state": self.gpu_model.state_dict(),
-                "likelihood_state": self.gpu_likelihood.state_dict(),
-            }, path / "gpu_gp.pt")
+            torch.save(
+                {
+                    "model_state": self.gpu_model.state_dict(),
+                    "likelihood_state": self.gpu_likelihood.state_dict(),
+                },
+                path / "gpu_gp.pt",
+            )
 
         # Save training data (needed for GP predictions)
         if self.train_x is not None:
-            torch.save({
-                "train_x": self.train_x.cpu(),
-                "train_y_cpu": self.train_y_cpu.cpu(),
-                "train_y_gpu": self.train_y_gpu.cpu(),
-            }, path / "train_data.pt")
+            torch.save(
+                {
+                    "train_x": self.train_x.cpu(),
+                    "train_y_cpu": self.train_y_cpu.cpu(),
+                    "train_y_gpu": self.train_y_gpu.cpu(),
+                },
+                path / "train_data.pt",
+            )
 
         # Save metadata
         metadata = {
             "model_type": "gp",
             "input_dim": self.input_dim,
-            "input_mean": self.input_mean.tolist() if self.input_mean is not None else None,
-            "input_std": self.input_std.tolist() if self.input_std is not None else None,
+            "input_mean": self.input_mean.tolist()
+            if self.input_mean is not None
+            else None,
+            "input_std": self.input_std.tolist()
+            if self.input_std is not None
+            else None,
             "cpu_mean": self.cpu_mean,
             "cpu_std": self.cpu_std,
             "gpu_mean": self.gpu_mean,
@@ -339,7 +349,9 @@ class GaussianProcessModel(DynamicThermalModel):
         logger.info(f"GP model saved to {path}")
 
     @classmethod
-    def load(cls, path: Path, config: Optional[Dict[str, Any]] = None) -> "GaussianProcessModel":
+    def load(
+        cls, path: Path, config: Optional[Dict[str, Any]] = None
+    ) -> "GaussianProcessModel":
         """Load GP model from directory."""
         path = Path(path)
 
@@ -367,8 +379,7 @@ class GaussianProcessModel(DynamicThermalModel):
         # Restore CPU GP
         model.cpu_likelihood = GaussianLikelihood().to(model.device)
         model.cpu_model = ThermalGP(
-            model.train_x, model.train_y_cpu,
-            model.cpu_likelihood, model.input_dim
+            model.train_x, model.train_y_cpu, model.cpu_likelihood, model.input_dim
         ).to(model.device)
 
         cpu_state = torch.load(path / "cpu_gp.pt", weights_only=True)
@@ -380,8 +391,7 @@ class GaussianProcessModel(DynamicThermalModel):
         # Restore GPU GP
         model.gpu_likelihood = GaussianLikelihood().to(model.device)
         model.gpu_model = ThermalGP(
-            model.train_x, model.train_y_gpu,
-            model.gpu_likelihood, model.input_dim
+            model.train_x, model.train_y_gpu, model.gpu_likelihood, model.input_dim
         ).to(model.device)
 
         gpu_state = torch.load(path / "gpu_gp.pt", weights_only=True)

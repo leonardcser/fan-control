@@ -5,8 +5,8 @@ stages:
     deps:
     - path: data/raw
       hash: md5
-      md5: 4196e7fa4d8b038f9c1c2a50af330abe.dir
-      size: 3071369
+      md5: 9e94af72f5d834f2e9c4cc2f3b3d4a84.dir
+      size: 3504241
       nfiles: 1
     - path: src/fan_control/pipeline/preprocess.py
       hash: md5
@@ -25,21 +25,21 @@ stages:
     outs:
     - path: data/processed
       hash: md5
-      md5: 682a206983226a2ba18ee5bf68796616.dir
-      size: 7507325
+      md5: 9411696a2d5057bebdfcf7ddc8ea0b2b.dir
+      size: 6134955
       nfiles: 11
   train:
     cmd: python -m fan_control.pipeline.train
     deps:
     - path: data/processed
       hash: md5
-      md5: 113b94ab76e39b6cf0ba5ef97347aea0.dir
-      size: 2143674
-      nfiles: 8
+      md5: 9411696a2d5057bebdfcf7ddc8ea0b2b.dir
+      size: 6134955
+      nfiles: 11
     - path: src/fan_control/models/
       hash: md5
-      md5: d397b7f0d406831f2b8b761504bbd687.dir
-      size: 131421
+      md5: 14e6f90a36051356ce45499270fa9d69.dir
+      size: 130922
       nfiles: 12
     - path: src/fan_control/pipeline/train.py
       hash: md5
@@ -62,37 +62,39 @@ stages:
           targets:
           - T_cpu
           - T_gpu
-        model.gp:
-          training_iter: 100
-          learning_rate: 0.1
-          max_train_samples: 2000
-        model.type: gp
+        model.gbr:
+          n_estimators: 200
+          max_depth: 5
+          learning_rate: 0.05
+          l2_regularization: 0.5
+          random_state: 42
+        model.type: gbr
     outs:
     - path: out/metrics/train_metrics.json
       hash: md5
-      md5: 9cbafb2e6883be9908974ef1b9a27a12
-      size: 209
-    - path: out/models/gp/
+      md5: 565632f81b53f15ba9b73c6a9133ebed
+      size: 256
+    - path: out/models/gbr/
       hash: md5
-      md5: 0720a763e94517ec2446626c520d633b.dir
-      size: 41392
-      nfiles: 4
+      md5: a91725379096c3ecf3708a963eff2bd3.dir
+      size: 845445
+      nfiles: 3
   evaluate:
     cmd: python -m fan_control.pipeline.evaluate
     deps:
     - path: data/processed/val.csv
       hash: md5
-      md5: 59640fb57e249686d3ebb6e4f1b455a7
-      size: 89797
-    - path: out/models/gp/
+      md5: 1beb5cc4b23dc3a6e50e7ab9f3dd40e0
+      size: 792352
+    - path: out/models/gbr/
       hash: md5
-      md5: 0720a763e94517ec2446626c520d633b.dir
-      size: 41392
-      nfiles: 4
+      md5: a91725379096c3ecf3708a963eff2bd3.dir
+      size: 845445
+      nfiles: 3
     - path: src/fan_control/models/
       hash: md5
-      md5: d397b7f0d406831f2b8b761504bbd687.dir
-      size: 131421
+      md5: 14e6f90a36051356ce45499270fa9d69.dir
+      size: 130922
       nfiles: 12
     - path: src/fan_control/pipeline/evaluate.py
       hash: md5
@@ -104,9 +106,9 @@ stages:
         - 10
         - 20
         - 50
-        model.type: gp
+        model.type: gbr
     outs:
     - path: out/metrics/val_metrics.json
       hash: md5
-      md5: 0719e4d3df6531f1a1e38f5d6645d2a6
-      size: 1990
+      md5: e53b85f803880dd010be6a1a8b5ee9c0
+      size: 1830

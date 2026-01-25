@@ -13,7 +13,7 @@ preprocess:
 
 # Model Configuration
 model:
-  type: gp      # physics | pinn | gbr | gp
+  type: gbr     # physics | pinn | gbr | gp
 
   # Feature configuration (shared across models)
   features:
@@ -66,9 +66,9 @@ model:
 
   # GP model parameters (Gaussian Process)
   gp:
-    training_iter: 100
-    learning_rate: 0.1
-    max_train_samples: 2000  # GP is O(n^3), subsample if needed
+    training_iter: 200
+    learning_rate: 0.05
+    max_train_samples: 3000  # GP is O(n^3), subsample if needed
 
 # Evaluation Configuration
 evaluate:

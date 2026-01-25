@@ -14,14 +14,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-try:
-    import torch
-    import torch.nn as nn
-    from torch.utils.data import DataLoader, TensorDataset
-
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader, TensorDataset
 
 from . import register_model
 from .base import DynamicThermalModel
@@ -68,9 +63,6 @@ class PINNModel(DynamicThermalModel):
     """
 
     def __init__(self, config: Dict[str, Any]):
-        if not TORCH_AVAILABLE:
-            raise ImportError("PyTorch is required for PINN model. Install with: pip install torch")
-
         super().__init__(config)
 
         # PINN-specific config
@@ -83,7 +75,12 @@ class PINNModel(DynamicThermalModel):
         self.dt = pinn_config["dt"]
 
         # Device selection
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+        elif torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+        else:
+            self.device = torch.device("cpu")
 
         # Input: [T_cpu, T_gpu, pwm2, pwm4, pwm5, P_cpu, P_gpu, T_amb]
         self.input_dim = 8
@@ -146,7 +143,9 @@ class PINNModel(DynamicThermalModel):
             df = df.iloc[:-1]
 
         # Extract features
-        X = df[["T_cpu", "T_gpu", "pwm2", "pwm4", "pwm5", "P_cpu", "P_gpu", "T_amb"]].values
+        X = df[
+            ["T_cpu", "T_gpu", "pwm2", "pwm4", "pwm5", "P_cpu", "P_gpu", "T_amb"]
+        ].values
         Y = df[["T_cpu_next", "T_gpu_next"]].values
 
         # Compute normalization parameters
@@ -198,10 +197,16 @@ class PINNModel(DynamicThermalModel):
                 data_loss = mse_loss(Y_pred, Y_batch)
 
                 # Physics loss (on unnormalized predictions)
-                Y_pred_unnorm = Y_pred * torch.FloatTensor(self.output_std + 1e-8).to(self.device)
-                Y_pred_unnorm = Y_pred_unnorm + torch.FloatTensor(self.output_mean).to(self.device)
+                Y_pred_unnorm = Y_pred * torch.FloatTensor(self.output_std + 1e-8).to(
+                    self.device
+                )
+                Y_pred_unnorm = Y_pred_unnorm + torch.FloatTensor(self.output_mean).to(
+                    self.device
+                )
 
-                physics_loss = self._physics_loss(T_k_batch, Y_pred_unnorm, P_batch, T_amb_batch)
+                physics_loss = self._physics_loss(
+                    T_k_batch, Y_pred_unnorm, P_batch, T_amb_batch
+                )
 
                 # Combined loss
                 loss = data_loss + self.physics_weight * physics_loss
@@ -220,7 +225,7 @@ class PINNModel(DynamicThermalModel):
 
             if (epoch + 1) % 50 == 0:
                 logger.info(
-                    f"Epoch {epoch+1}/{self.epochs}: "
+                    f"Epoch {epoch + 1}/{self.epochs}: "
                     f"data_loss={avg_data_loss:.4f}, physics_loss={avg_physics_loss:.4f}"
                 )
 
@@ -242,7 +247,9 @@ class PINNModel(DynamicThermalModel):
             "final_data_loss": float(best_loss),
         }
 
-        logger.info(f"PINN trained: CPU RMSE={cpu_rmse:.2f}°C, GPU RMSE={gpu_rmse:.2f}°C")
+        logger.info(
+            f"PINN trained: CPU RMSE={cpu_rmse:.2f}°C, GPU RMSE={gpu_rmse:.2f}°C"
+        )
         return metrics
 
     def predict_next(
@@ -313,10 +320,18 @@ class PINNModel(DynamicThermalModel):
             "hidden_dims": self.hidden_dims,
             "input_dim": self.input_dim,
             "output_dim": self.output_dim,
-            "input_mean": self.input_mean.tolist() if self.input_mean is not None else None,
-            "input_std": self.input_std.tolist() if self.input_std is not None else None,
-            "output_mean": self.output_mean.tolist() if self.output_mean is not None else None,
-            "output_std": self.output_std.tolist() if self.output_std is not None else None,
+            "input_mean": self.input_mean.tolist()
+            if self.input_mean is not None
+            else None,
+            "input_std": self.input_std.tolist()
+            if self.input_std is not None
+            else None,
+            "output_mean": self.output_mean.tolist()
+            if self.output_mean is not None
+            else None,
+            "output_std": self.output_std.tolist()
+            if self.output_std is not None
+            else None,
             "config": self.config,
         }
 
@@ -349,7 +364,9 @@ class PINNModel(DynamicThermalModel):
             metadata["hidden_dims"],
             metadata["output_dim"],
         )
-        model.network.load_state_dict(torch.load(path / "network.pt", weights_only=True))
+        model.network.load_state_dict(
+            torch.load(path / "network.pt", weights_only=True)
+        )
         model.network.to(model.device)
         model.network.eval()
 
