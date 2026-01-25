@@ -91,10 +91,21 @@ plot_config:
 
 # Time-series data collection for MPC thermal modeling
 data_collection:
-  # PWM ranges (percentage: 0-100)
-  pwm2_levels: [20, 30, 40, 60, 100]
-  pwm4_levels: [0, 15, 30, 50, 80]
-  pwm5_levels: [0, 15, 30, 50, 100]
+  # PWM levels (percentage: 0-100) - biased toward low fan speeds
+  pwm2_levels: [20, 25, 30, 35, 40, 50, 70, 100]
+  pwm4_levels: [0, 10, 15, 20, 30, 50, 80]
+  pwm5_levels: [0, 10, 15, 20, 30, 50, 100]
+
+  # Episode types for different PWM variation strategies
+  episode_types:
+    - mode: "single_isolation"
+      repeats_per_load: 3 # × 3 fans = 9 episodes per load
+
+    - mode: "pair_isolation"
+      repeats_per_load: 3 # × 3 pairs = 9 episodes per load
+
+    - mode: "full_sequential"
+      repeats_per_load: 3 # = 3 episodes per load
 
   # Load levels to test
   # Note: cpu_load accepts 'stress' flags (e.g. '--cpu 6')
@@ -103,66 +114,77 @@ data_collection:
   load_levels:
     - cpu_load: ""
       gpu_load: ""
-      description: "Idle"
+      description: "idle"
 
     # CPU focused loads (assuming 24 cores)
     - cpu_load: "--cpu 1"
       gpu_load: ""
-      description: "CPU (1 cores)"
+      description: "cpu_1"
     - cpu_load: "--cpu 2"
       gpu_load: ""
-      description: "CPU (2 cores)"
+      description: "cpu_2"
     - cpu_load: "--cpu 4"
       gpu_load: ""
-      description: "CPU (4 cores)"
+      description: "cpu_4"
     - cpu_load: "--cpu 6"
       gpu_load: ""
-      description: "CPU (6 cores)"
+      description: "cpu_6"
     - cpu_load: "--cpu 10"
       gpu_load: ""
-      description: "CPU (10 cores)"
+      description: "cpu_10"
     - cpu_load: "--cpu 16"
       gpu_load: ""
-      description: "CPU (16 cores)"
+      description: "cpu_16"
     - cpu_load: "--cpu 24"
       gpu_load: ""
-      description: "CPU (24 cores)"
+      description: "cpu_24"
 
     # GPU focused loads
     - cpu_load: ""
       gpu_load: "--load 5"
-      description: "GPU (5%)"
+      description: "gpu_5pct"
     - cpu_load: ""
       gpu_load: "--load 10"
-      description: "GPU (10%)"
+      description: "gpu_10pct"
     - cpu_load: ""
       gpu_load: "--load 50"
-      description: "GPU (50%)"
+      description: "gpu_50pct"
     - cpu_load: ""
       gpu_load: "--load 60"
-      description: "GPU (60%)"
+      description: "gpu_60pct"
     - cpu_load: ""
       gpu_load: "--load 70"
-      description: "GPU (70%)"
+      description: "gpu_70pct"
     - cpu_load: ""
       gpu_load: "--load 100"
-      description: "GPU (100%)"
+      description: "gpu_100pct"
 
     # Mixed loads
     - cpu_load: "--cpu 1"
       gpu_load: "--load 100"
-      description: "ML Training"
+      description: "cpu_1_gpu_100pct"
     - cpu_load: "--cpu 2"
       gpu_load: "--load 100"
-      description: "ML Training"
+      description: "cpu_2_gpu_100pct"
     - cpu_load: "--cpu 24"
       gpu_load: "--load 100"
-      description: "ML Training"
+      description: "cpu_24_gpu_100pct"
+    - cpu_load: "--cpu 4"
+      gpu_load: "--load 50"
+      description: "cpu_4_gpu_50pct"
+    - cpu_load: "--cpu 8"
+      gpu_load: "--load 70"
+      description: "cpu_8_gpu_70pct"
+    - cpu_load: "--cpu 6"
+      gpu_load: "--load 30"
+      description: "cpu_6_gpu_30pct"
+    - cpu_load: "--cpu 12"
+      gpu_load: "--load 50"
+      description: "cpu_12_gpu_50pct"
 
   # Time-series collection parameters
   sample_interval: 1.0 # Seconds between samples (1Hz)
   episode_duration: 180 # Episode length in seconds (3 minutes)
-  episodes_per_load: 3 # Number of episodes per load level
   load_stabilization_time: 5 # Wait after load change before episode
 
   # PWM schedule generation

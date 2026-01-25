@@ -29,13 +29,23 @@ def generate_timeseries_plots(df: pd.DataFrame, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     episodes = df["episode_id"].unique()
 
-    # 1. Episode timeline plot (first 3 episodes)
-    num_episodes = min(3, len(episodes))
+    # 1. Episode timeline plot (one episode per load type for representative coverage)
+    if "load_description" in df.columns:
+        # Sample one episode per load_description to cover different regimes
+        sample_episodes = (
+            df.groupby("load_description")["episode_id"]
+            .first()
+            .values
+        )
+    else:
+        sample_episodes = episodes[:3]
+
+    num_episodes = len(sample_episodes)
     fig, axes = plt.subplots(num_episodes, 1, figsize=(16, 4 * num_episodes))
     if num_episodes == 1:
         axes = [axes]
 
-    for i, ep_id in enumerate(episodes[:num_episodes]):
+    for i, ep_id in enumerate(sample_episodes):
         ep_data = df[df["episode_id"] == ep_id].sort_values("sample_index")
         ax = axes[i]
         ax2 = ax.twinx()

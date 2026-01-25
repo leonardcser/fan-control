@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 from .hardware import HardwareController
 from .load import LoadOrchestrator
-from .models import Episode, PWMStep, TimeSeriesSample
+from .models import Episode, EpisodeType, PWMStep, TimeSeriesSample
 from .safety import AbortPointError, SafetyMonitor
 from .utils import drop_privileges
 
@@ -30,55 +30,122 @@ class PWMScheduleGenerator:
         self.min_hold = schedule_config["min_hold_time"]
         self.max_hold = schedule_config["max_hold_time"]
 
-        # Get PWM ranges for each device from configured levels
-        self.pwm_ranges: dict[str, tuple[int, int]] = {}
+        # Store discrete PWM levels per device (converted to 0-255 scale)
+        self.pwm_levels: dict[str, list[int]] = {}
+        self.pwm_min: dict[str, int] = {}  # Minimum PWM for isolation modes
         for device_key in devices.keys():
             levels = data_config[f"{device_key}_levels"]
             # Convert percentage (0-100) to PWM (0-255)
-            min_pwm = int(round(min(levels) * 255 / 100))
-            max_pwm = int(round(max(levels) * 255 / 100))
-            self.pwm_ranges[device_key] = (min_pwm, max_pwm)
+            pwm_values = [int(round(lvl * 255 / 100)) for lvl in levels]
+            self.pwm_levels[device_key] = pwm_values
+            self.pwm_min[device_key] = min(pwm_values)
 
-    def _random_pwm(self, rng: np.random.Generator) -> dict[str, int]:
-        """Generate random PWM values for all devices."""
+    def _sample_pwm(
+        self,
+        rng: np.random.Generator,
+        varying_fans: list[str],
+        fixed_mode: Optional[str] = None,
+    ) -> dict[str, int]:
+        """Generate PWM values by sampling from discrete levels.
+
+        Args:
+            rng: Random number generator
+            varying_fans: List of device keys that should vary
+            fixed_mode: How to set non-varying fans ("minimum" or None for random)
+
+        Returns:
+            Dict mapping device keys to PWM values (0-255)
+        """
         pwm_values = {}
-        for device_key, (min_pwm, max_pwm) in self.pwm_ranges.items():
-            pwm = rng.integers(min_pwm, max_pwm + 1)
-            # Check stall threshold
-            stall_pwm = int(round(self.devices[device_key]["stall_pwm"] * 255 / 100))
-            if 0 < pwm < stall_pwm:
-                pwm = 0
-            pwm_values[device_key] = int(pwm)
+        for device_key, levels in self.pwm_levels.items():
+            if device_key in varying_fans:
+                # Sample from discrete levels
+                pwm = int(rng.choice(levels))
+            elif fixed_mode == "minimum":
+                # Fixed fans use minimum value
+                pwm = self.pwm_min[device_key]
+            else:
+                # Random selection for non-isolation modes
+                pwm = int(rng.choice(levels))
+
+            # Apply stall threshold check
+            pwm = self._apply_stall_check(device_key, pwm)
+            pwm_values[device_key] = pwm
         return pwm_values
 
+    def _apply_stall_check(self, device_key: str, pwm_val: int) -> int:
+        """Apply stall threshold check to a PWM value.
+
+        Args:
+            device_key: Device key (e.g., 'pwm2')
+            pwm_val: PWM value to check
+
+        Returns:
+            Adjusted PWM value (0 if below stall threshold)
+        """
+        stall_pwm = int(round(self.devices[device_key]["stall_pwm"] * 255 / 100))
+        if 0 < pwm_val < stall_pwm:
+            return 0
+        return pwm_val
+
     def _step_change(
-        self, current_pwm: dict[str, int], rng: np.random.Generator
+        self,
+        current_pwm: dict[str, int],
+        rng: np.random.Generator,
+        varying_fans: list[str],
     ) -> dict[str, int]:
-        """Generate a step change from current PWM (modify 1-2 fans randomly)."""
+        """Generate a step change from current PWM (modify exactly 1 fan).
+
+        Args:
+            current_pwm: Current PWM values
+            rng: Random number generator
+            varying_fans: List of device keys that can be changed
+
+        Returns:
+            New PWM values with exactly one fan changed
+        """
         new_pwm = current_pwm.copy()
-        device_keys = list(self.pwm_ranges.keys())
 
-        # Randomly choose 1 or 2 fans to modify
-        num_to_change = rng.choice([1, 2])
-        fans_to_change = rng.choice(device_keys, size=num_to_change, replace=False)
+        # Always change exactly 1 fan from the varying set
+        fan_to_change = str(rng.choice(varying_fans))
+        levels = self.pwm_levels[fan_to_change]
+        current_val = current_pwm[fan_to_change]
 
-        for device_key in fans_to_change:
-            min_pwm, max_pwm = self.pwm_ranges[device_key]
-            new_val = rng.integers(min_pwm, max_pwm + 1)
-            # Check stall threshold
-            stall_pwm = int(round(self.devices[device_key]["stall_pwm"] * 255 / 100))
-            if 0 < new_val < stall_pwm:
-                new_val = 0
-            new_pwm[device_key] = int(new_val)
+        # Pre-compute effective levels after stall check
+        effective_levels = [self._apply_stall_check(fan_to_change, lvl) for lvl in levels]
+        # Deduplicate while preserving order
+        seen = set()
+        unique_effective = []
+        for lvl in effective_levels:
+            if lvl not in seen:
+                seen.add(lvl)
+                unique_effective.append(lvl)
+
+        # Filter to levels different from current value
+        other_levels = [lvl for lvl in unique_effective if lvl != current_val]
+        if not other_levels:
+            # All levels same as current (edge case)
+            other_levels = unique_effective
+
+        new_val = int(rng.choice(other_levels))
+        new_pwm[fan_to_change] = new_val
 
         return new_pwm
 
-    def generate(self, episode_duration: float, seed: int) -> list[PWMStep]:
+    def generate(
+        self,
+        episode_duration: float,
+        seed: int,
+        mode: str,
+        varying_fans: list[str],
+    ) -> list[PWMStep]:
         """Generate random step schedule for an episode.
 
         Args:
             episode_duration: Episode length in seconds
             seed: Random seed for reproducibility
+            mode: Episode mode ("single_isolation", "pair_isolation", "full_sequential")
+            varying_fans: List of device keys that should vary during episode
 
         Returns:
             List of PWMStep objects with time offsets and PWM values
@@ -87,8 +154,11 @@ class PWMScheduleGenerator:
         steps = []
         t = 0.0
 
-        # Initial random PWM
-        current_pwm = self._random_pwm(rng)
+        # Determine fixed_mode based on episode type
+        fixed_mode = "minimum" if mode in ("single_isolation", "pair_isolation") else None
+
+        # Initial PWM values
+        current_pwm = self._sample_pwm(rng, varying_fans, fixed_mode)
         steps.append(PWMStep(time_offset=0.0, pwm_values=current_pwm))
 
         while t < episode_duration:
@@ -97,8 +167,8 @@ class PWMScheduleGenerator:
             if t >= episode_duration:
                 break
 
-            # Step change: modify 1-2 fans randomly
-            new_pwm = self._step_change(current_pwm, rng)
+            # Step change: modify exactly 1 fan from varying set
+            new_pwm = self._step_change(current_pwm, rng, varying_fans)
             steps.append(PWMStep(time_offset=t, pwm_values=new_pwm))
             current_pwm = new_pwm
 
@@ -127,8 +197,16 @@ class EpisodeCollector:
         # Time-series parameters
         self.sample_interval = self.data_config["sample_interval"]
         self.episode_duration = self.data_config["episode_duration"]
-        self.episodes_per_load = self.data_config["episodes_per_load"]
         self.sampling_seed = self.data_config["sampling_seed"]
+
+        # Parse episode types
+        self.episode_types: list[EpisodeType] = [
+            EpisodeType(mode=et["mode"], repeats_per_load=et["repeats_per_load"])
+            for et in self.data_config["episode_types"]
+        ]
+
+        # Device keys for generating fan combinations
+        self.device_keys = list(self.devices.keys())
 
         # PWM schedule generator
         self.schedule_generator = PWMScheduleGenerator(
@@ -228,7 +306,12 @@ class EpisodeCollector:
         )
 
     def run_episode(
-        self, load_config: dict, episode_id: str, seed: int
+        self,
+        load_config: dict,
+        episode_id: str,
+        seed: int,
+        mode: str,
+        varying_fans: list[str],
     ) -> tuple[Episode, list[TimeSeriesSample]]:
         """Run single episode: continuous 1Hz sampling with PWM steps.
 
@@ -238,11 +321,15 @@ class EpisodeCollector:
             load_config: Load configuration dict
             episode_id: Unique episode identifier
             seed: Random seed for PWM schedule generation
+            mode: Episode mode for PWM variation strategy
+            varying_fans: List of device keys that vary during this episode
 
         Returns:
             Tuple of (Episode metadata, list of samples)
         """
-        schedule = self.schedule_generator.generate(self.episode_duration, seed)
+        schedule = self.schedule_generator.generate(
+            self.episode_duration, seed, mode, varying_fans
+        )
         samples: list[TimeSeriesSample] = []
         start_time = time.time()
         current_step_idx = 0
@@ -326,20 +413,59 @@ class EpisodeCollector:
 
         return episode, samples
 
+    def _get_fan_combinations(self, mode: str) -> list[list[str]]:
+        """Get fan combinations for an episode type.
+
+        Args:
+            mode: Episode mode
+
+        Returns:
+            List of fan combinations (each is a list of device keys)
+        """
+        if mode == "single_isolation":
+            # One fan at a time: [[pwm2], [pwm4], [pwm5]]
+            return [[dk] for dk in self.device_keys]
+        elif mode == "pair_isolation":
+            # Pairs of fans: [[pwm2, pwm4], [pwm2, pwm5], [pwm4, pwm5]]
+            from itertools import combinations
+
+            return [list(combo) for combo in combinations(self.device_keys, 2)]
+        else:  # full_sequential
+            # All fans vary together
+            return [self.device_keys]
+
+    def _calculate_total_episodes(self, num_loads: int) -> int:
+        """Calculate total episodes across all types and loads."""
+        total = 0
+        for et in self.episode_types:
+            combinations = self._get_fan_combinations(et.mode)
+            total += len(combinations) * et.repeats_per_load * num_loads
+        return total
+
     def run_collection(self, output_path: Path) -> None:
-        """Run full campaign: episodes_per_load episodes for each load level.
+        """Run full campaign: iterate over episode types and load levels.
 
         Args:
             output_path: Path to output CSV file
         """
         load_levels = self.data_config["load_levels"]
-        total_episodes = self.episodes_per_load * len(load_levels)
+        total_episodes = self._calculate_total_episodes(len(load_levels))
+
+        # Calculate episodes per load for display
+        episodes_per_load = sum(
+            len(self._get_fan_combinations(et.mode)) * et.repeats_per_load
+            for et in self.episode_types
+        )
 
         print("\n" + "=" * 80)
         print("STARTING TIME-SERIES DATA COLLECTION")
         print("=" * 80)
         print(f"Episode duration: {self.episode_duration}s")
-        print(f"Episodes per load: {self.episodes_per_load}")
+        print(f"Episode types: {len(self.episode_types)}")
+        for et in self.episode_types:
+            combos = len(self._get_fan_combinations(et.mode))
+            print(f"  - {et.mode}: {et.repeats_per_load} repeats × {combos} combinations")
+        print(f"Episodes per load: {episodes_per_load}")
         print(f"Load levels: {len(load_levels)}")
         print(f"Total episodes: {total_episodes}")
         print(f"Sample interval: {self.sample_interval}s")
@@ -367,32 +493,41 @@ class EpisodeCollector:
                     load["cpu_load"], load["gpu_load"]
                 ):
                     tqdm.write(f"Failed to set load for: {description}")
-                    main_pbar.update(self.episodes_per_load)
+                    main_pbar.update(episodes_per_load)
                     continue
 
-                # Run episodes for this load
-                for ep_num in range(self.episodes_per_load):
-                    episode_id = f"{description}_{ep_num}_{int(time.time())}"
-                    seed = self.sampling_seed + self._episode_counter
-                    self._episode_counter += 1
+                # Run episodes for each episode type
+                for et in self.episode_types:
+                    fan_combinations = self._get_fan_combinations(et.mode)
 
-                    tqdm.write(
-                        f"\n  Starting episode {ep_num + 1}/{self.episodes_per_load}: {episode_id}"
-                    )
+                    for varying_fans in fan_combinations:
+                        fans_str = "+".join(varying_fans)
+                        tqdm.write(f"\n  Episode type: {et.mode}, varying: {fans_str}")
 
-                    episode, samples = self.run_episode(load, episode_id, seed)
-                    self.episodes.append(episode)
-                    self.samples.extend(samples)
+                        for rep in range(et.repeats_per_load):
+                            episode_id = f"{description}_{et.mode}_{fans_str}_{rep}_{int(time.time())}"
+                            seed = self.sampling_seed + self._episode_counter
+                            self._episode_counter += 1
 
-                    # Incremental save
-                    self.save_samples(output_path)
+                            tqdm.write(
+                                f"    Starting episode {rep + 1}/{et.repeats_per_load}: {episode_id}"
+                            )
 
-                    main_pbar.update(1)
+                            episode, samples = self.run_episode(
+                                load, episode_id, seed, et.mode, varying_fans
+                            )
+                            self.episodes.append(episode)
+                            self.samples.extend(samples)
 
-                    if episode.aborted:
-                        tqdm.write(
-                            f"  Episode aborted: {episode.abort_reason}"
-                        )
+                            # Incremental save
+                            self.save_samples(output_path)
+
+                            main_pbar.update(1)
+
+                            if episode.aborted:
+                                tqdm.write(
+                                    f"    Episode aborted: {episode.abort_reason}"
+                                )
 
         # Final summary
         print("\n" + "=" * 80)

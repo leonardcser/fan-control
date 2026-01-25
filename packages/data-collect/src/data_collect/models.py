@@ -142,3 +142,11 @@ class PWMStep:
     pwm_values: dict[str, int] = field(default_factory=dict)  # Target PWM values (0-255)
 
 
+@dataclass
+class EpisodeType:
+    """Configuration for an episode type."""
+
+    mode: str  # "single_isolation", "pair_isolation", or "full_sequential"
+    repeats_per_load: int  # Number of episodes per load level for this type
+
+
