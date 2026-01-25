@@ -747,6 +747,7 @@ dependencies = [
 dev = [
     { name = "dvc" },
     { name = "dvclive" },
+    { name = "gpytorch" },
     { name = "joblib" },
     { name = "matplotlib" },
     { name = "pandas" },
@@ -768,6 +769,7 @@ requires-dist = [
 dev = [
     { name = "dvc", specifier = ">=3.66.1" },
     { name = "dvclive", specifier = ">=3.49.0" },
+    { name = "gpytorch", specifier = ">=1.15.1" },
     { name = "joblib", specifier = ">=1.4.0" },
     { name = "matplotlib", specifier = ">=3.10.8" },
     { name = "pandas", specifier = ">=2.3.3" },
@@ -967,6 +969,22 @@ wheels = [
 ]
 
 [[package]]
+name = "gpytorch"
+version = "1.15.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jaxtyping" },
+    { name = "linear-operator" },
+    { name = "mpmath" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/56/d8/939a53971ac13f50e21521fee0d68902d9676cdffbd039677e2ae3c80ffa/gpytorch-1.15.1.tar.gz", hash = "sha256:76d84d4ec5c4c3e99785f1b36043dbac2ff2d867be4afa758d5202606f0d17f9", size = 2780472, upload-time = "2026-01-16T02:19:11.412Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7c/17/86dec72468a56e8f8ab417de504db523bf852646ea8d086749055f1ea60a/gpytorch-1.15.1-py3-none-any.whl", hash = "sha256:30e882a78e8c81093fab33fde9bc0a550c8dbe4a6365ade3286c961685bb8504", size = 287804, upload-time = "2026-01-16T02:19:09.909Z" },
+]
+
+[[package]]
 name = "grandalf"
 version = "0.8"
 source = { registry = "https://pypi.org/simple" }
@@ -1035,6 +1053,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/d2/b6/f17d6e80252b7be6ca4d9463db226ce7863d26287f16f1347e981cd2f3d8/iterative_telemetry-0.0.10.tar.gz", hash = "sha256:7fde6111de6fa4acf5a95a6190cc9cc5d17d835a815f0a18ece201f6031f4ed6", size = 20080, upload-time = "2025-02-11T02:47:53.391Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1a/82/7331bbf84f1ccce7a2dd09a580c7bad38417cf35c84dc0b81bce2cf779b9/iterative_telemetry-0.0.10-py3-none-any.whl", hash = "sha256:e58ffb60d22c3de8dad6a114697cc61f6c14911cae484bf90df394e0d6553603", size = 10644, upload-time = "2025-02-11T02:47:51.273Z" },
+]
+
+[[package]]
+name = "jaxtyping"
+version = "0.3.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "wadler-lindig" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5d/25/0b2c2cd048fe03561d3ed8aa9d0242903606c31ee0ef329b2adae79ebc79/jaxtyping-0.3.6.tar.gz", hash = "sha256:88e5450c96a1bcaf37c74ae5ef60084b5d307727a198d31cc7eaeba9db3f42e7", size = 45681, upload-time = "2026-01-24T17:37:48.131Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3f/87/944bcf3cb5b82a1f7fb86e825e866eb3a72220d4bb0f2c163d7b122772f2/jaxtyping-0.3.6-py3-none-any.whl", hash = "sha256:179df02f6b5b704d2ebafd1946cc857e745b489328d668ff4f8555b02e8aa944", size = 56053, upload-time = "2026-01-24T17:37:46.472Z" },
 ]
 
 [[package]]
@@ -1130,6 +1160,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b6/a5/607e533ed6c83ae1a696969b8e1c137dfebd5759a2e9682e26ff1b97740b/kombu-5.6.2.tar.gz", hash = "sha256:8060497058066c6f5aed7c26d7cd0d3b574990b09de842a8c5aaed0b92cc5a55", size = 472594, upload-time = "2025-12-29T20:30:07.779Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fb/0f/834427d8c03ff1d7e867d3db3d176470c64871753252b21b4f4897d1fa45/kombu-5.6.2-py3-none-any.whl", hash = "sha256:efcfc559da324d41d61ca311b0c64965ea35b4c55cc04ee36e55386145dace93", size = 214219, upload-time = "2025-12-29T20:30:05.74Z" },
+]
+
+[[package]]
+name = "linear-operator"
+version = "0.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jaxtyping" },
+    { name = "mpmath" },
+    { name = "scipy" },
+    { name = "torch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c2/e9/c900e42b989e5778d0a28bb28aa63a5cef4f7e2f1af34b9de6157da77913/linear_operator-0.6.tar.gz", hash = "sha256:a9e2663879f1a2b28631bf7ef34892c4e5749893e711c8ef0ab0a39aff70a654", size = 185103, upload-time = "2025-01-28T23:13:58.745Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ed/c7/8a27fd8e182c611d4bf0aa9f0ea9046a7c843901d0f06c8cdcb599840a38/linear_operator-0.6-py3-none-any.whl", hash = "sha256:b7c30ce0f6599e19c1cb970e00811828df98783b20c1dd2f765928415012f41c", size = 176344, upload-time = "2025-01-28T23:13:56.666Z" },
 ]
 
 [[package]]
@@ -2520,6 +2565,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/92/f4/0738e6849858deae22218be3bbb8207ba83a96e9d0ec7e8e8cd67b30e5ca/voluptuous-0.16.0.tar.gz", hash = "sha256:006535e22fed944aec17bef6e8725472476194743c87bd233e912eb463f8ff05", size = 54238, upload-time = "2025-12-18T23:18:46.08Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d1/00/0e0da784245c93cf346150ab67634177bf277f93b7a162bb56c928c39c04/voluptuous-0.16.0-py3-none-any.whl", hash = "sha256:ee342095263e1b5afbd4d418cb5adc92810eebfd07696bb033a261210df33db4", size = 31931, upload-time = "2025-12-18T23:18:44.694Z" },
+]
+
+[[package]]
+name = "wadler-lindig"
+version = "0.1.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/1e/67/cbae4bf7683a64755c2c1778c418fea96d00e34395bb91743f08bd951571/wadler_lindig-0.1.7.tar.gz", hash = "sha256:81d14d3fe77d441acf3ebd7f4aefac20c74128bf460e84b512806dccf7b2cd55", size = 15842, upload-time = "2025-06-18T07:00:42.843Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8d/96/04e7b441807b26b794da5b11e59ed7f83b2cf8af202bd7eba8ad2fa6046e/wadler_lindig-0.1.7-py3-none-any.whl", hash = "sha256:e3ec83835570fd0a9509f969162aeb9c65618f998b1f42918cfc8d45122fe953", size = 20516, upload-time = "2025-06-18T07:00:41.684Z" },
 ]
 
 [[package]]

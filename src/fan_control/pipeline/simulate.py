@@ -26,25 +26,26 @@ if __name__ == "__main__":
     with open("params.yaml") as f:
         params = yaml.safe_load(f)
 
-    models_dir = Path("out/models")
+    model_type = params["model"]["type"]
+    models_dir = Path(f"out/models/{model_type}")
     metrics_dir = Path("out/metrics")
     metrics_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load model
-    model_path = models_dir / "thermal_model.pkl"
-    if not model_path.exists():
-        logger.error(f"Model not found at {model_path}")
-        raise FileNotFoundError(f"Model not found at {model_path}")
+    # Check model exists
+    if not models_dir.exists():
+        logger.error(f"Model not found at {models_dir}")
+        raise FileNotFoundError(f"Model not found at {models_dir}")
 
-    logger.info(f"Loaded model from {model_path}")
+    logger.info(f"Loaded {model_type} model from {models_dir}")
 
     # Run simulation
     logger.info("Starting simulation...")
-    run_simulation(model_path, config, params, metrics_dir)
+    run_simulation(models_dir, config, params, metrics_dir)
     logger.info("Simulation completed")
 
     # Generate simulation metrics (summary of simulation results)
     metrics = {
+        "model_type": model_type,
         "sim": {
             "status": "completed"
         }

@@ -11,65 +11,83 @@ preprocess:
     gpu: 85.0
   test_size: 0.2
 
-# Model training parameters
+# Model Configuration
 model:
-  n_estimators: 200
-  learning_rate: 0.05
-  max_depth: 8
+  type: gp      # physics | pinn | gbr | gp
 
-# ML Model Configuration
-# Uses Gradient Boosting Regressor (sklearn) instead of physics equations.
-# This handles complex non-linearities and regime shifts (e.g. 6-core vs 24-core heat density).
-ml_model:
-  type: "gradient_boosting"
-
-  # Features to use for prediction
+  # Feature configuration (shared across models)
   features:
-    - P_cpu
-    - P_gpu
-    - T_amb
+    state:
+    - T_cpu
+    - T_gpu
+    control:
     - pwm2
     - pwm4
     - pwm5
-    # - pwm7
-
-  # Hyperparameters for GradientBoostingRegressor
-  hyperparameters:
-    n_estimators: 200
-    learning_rate: 0.05
-    max_depth: 8
-    random_state: 42
-
-  # Targets to train models for
-  targets:
+    disturbance:
+    - P_cpu
+    - P_gpu
+    - T_amb
+    targets:
     - T_cpu
     - T_gpu
+  physics:
+    dt: 1.0  # Time step (seconds)
+    # Initial parameter guesses (will be optimized during training)
+    C_cpu: 100.0      # CPU thermal capacitance (J/°C)
+    C_gpu: 80.0       # GPU thermal capacitance (J/°C)
+    G_cpu_base: 1.0   # CPU base thermal conductance (W/°C)
+    G_gpu_base: 0.8   # GPU base thermal conductance (W/°C)
+    G_cpu_pwm2: 0.05  # CPU cooling from pwm2
+    G_cpu_pwm4: 0.02  # CPU cooling from pwm4
+    G_cpu_pwm5: 0.02  # CPU cooling from pwm5
+    G_gpu_pwm2: 0.01  # GPU cooling from pwm2
+    G_gpu_pwm4: 0.03  # GPU cooling from pwm4
+    G_gpu_pwm5: 0.04  # GPU cooling from pwm5
 
-  # Filter out thermally-saturated data during training
-  # When temps exceed these thresholds, fans appear ineffective due to throttling
-  thermal_saturation_filter:
-    max_cpu_temp: 95.0 # Filter out T_cpu >= this (°C)
-    max_gpu_temp: 85.0 # Filter out T_gpu >= this (°C)
+  # PINN model parameters (Physics-Informed Neural Network)
+  pinn:
+    hidden_dims:
+    - 64
+    - 32
+    epochs: 200
+    learning_rate: 0.001
+    batch_size: 64
+    physics_weight: 0.1
+    dt: 1.0
 
-  # Minimum power thresholds for training
-  # Filter out low-power samples to avoid training on idle/noise data
-  min_power_threshold:
-    cpu: 10.0 # Only train CPU model on samples with P_cpu > this (W)
-    gpu: 5.0 # Only train GPU model on samples with P_gpu > this (W)
+  # GBR model parameters (Gradient Boosting Regressor)
+  gbr:
+    n_estimators: 100
+    max_depth: 4
+    learning_rate: 0.1
+    l2_regularization: 1.0
+    random_state: 42
+
+  # GP model parameters (Gaussian Process)
+  gp:
+    training_iter: 100
+    learning_rate: 0.1
+    max_train_samples: 2000  # GP is O(n^3), subsample if needed
+
+# Evaluation Configuration
+evaluate:
+  horizons:               # Multi-step rollout horizons to test
 
 # Optimizer Configuration
+  - 10
+  - 20
+  - 50
 optimizer:
-  method: "COBYLA"
+  method: COBYLA
   options:
-    maxiter: 200 # Maximum number of iterations
-    rhobeg: 15.0 # Initial trust region radius
-    tol: 0.5 # Tolerance for constraint violation
+    maxiter: 200
+    rhobeg: 15.0
+    tol: 0.5
 
 # Controller Configuration
 controller:
-  # Target temperatures for the control loop (°C)
   targets:
-    T_cpu: 83.0 # Target CPU temperature
-    T_gpu: 60.0 # Target GPU temperature
-  # Control loop interval (seconds)
+    T_cpu: 83.0
+    T_gpu: 60.0
   interval: 2.0

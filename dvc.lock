@@ -5,13 +5,13 @@ stages:
     deps:
     - path: data/raw
       hash: md5
-      md5: 6035094ab0150c07af82e0ab34e6034f.dir
-      size: 437713
+      md5: f8c7dc7210302fdbefd765c03a409155.dir
+      size: 475660
       nfiles: 1
     - path: src/fan_control/pipeline/preprocess.py
       hash: md5
-      md5: 47f8045c411d22e00b64d3ed4e7626d7
-      size: 3101
+      md5: d5809b74f08acb6b31defbd883b760ec
+      size: 8941
     params:
       params.yaml:
         preprocess:
@@ -25,6 +25,88 @@ stages:
     outs:
     - path: data/processed
       hash: md5
-      md5: e17a5bdf31b6d7857a8680613c803614.dir
-      size: 404629
-      nfiles: 2
+      md5: 113b94ab76e39b6cf0ba5ef97347aea0.dir
+      size: 2143674
+      nfiles: 8
+  train:
+    cmd: python -m fan_control.pipeline.train
+    deps:
+    - path: data/processed
+      hash: md5
+      md5: 113b94ab76e39b6cf0ba5ef97347aea0.dir
+      size: 2143674
+      nfiles: 8
+    - path: src/fan_control/models/
+      hash: md5
+      md5: d397b7f0d406831f2b8b761504bbd687.dir
+      size: 131421
+      nfiles: 12
+    - path: src/fan_control/pipeline/train.py
+      hash: md5
+      md5: 07afc059e2474aca70a4b7235de3aa17
+      size: 1786
+    params:
+      params.yaml:
+        model.features:
+          state:
+          - T_cpu
+          - T_gpu
+          control:
+          - pwm2
+          - pwm4
+          - pwm5
+          disturbance:
+          - P_cpu
+          - P_gpu
+          - T_amb
+          targets:
+          - T_cpu
+          - T_gpu
+        model.gp:
+          training_iter: 100
+          learning_rate: 0.1
+          max_train_samples: 2000
+        model.type: gp
+    outs:
+    - path: out/metrics/train_metrics.json
+      hash: md5
+      md5: 9cbafb2e6883be9908974ef1b9a27a12
+      size: 209
+    - path: out/models/gp/
+      hash: md5
+      md5: 0720a763e94517ec2446626c520d633b.dir
+      size: 41392
+      nfiles: 4
+  evaluate:
+    cmd: python -m fan_control.pipeline.evaluate
+    deps:
+    - path: data/processed/val.csv
+      hash: md5
+      md5: 59640fb57e249686d3ebb6e4f1b455a7
+      size: 89797
+    - path: out/models/gp/
+      hash: md5
+      md5: 0720a763e94517ec2446626c520d633b.dir
+      size: 41392
+      nfiles: 4
+    - path: src/fan_control/models/
+      hash: md5
+      md5: d397b7f0d406831f2b8b761504bbd687.dir
+      size: 131421
+      nfiles: 12
+    - path: src/fan_control/pipeline/evaluate.py
+      hash: md5
+      md5: bcd048e1759720e1cf54c59bedb36fe5
+      size: 11175
+    params:
+      params.yaml:
+        evaluate.horizons:
+        - 10
+        - 20
+        - 50
+        model.type: gp
+    outs:
+    - path: out/metrics/val_metrics.json
+      hash: md5
+      md5: 0719e4d3df6531f1a1e38f5d6645d2a6
+      size: 1990

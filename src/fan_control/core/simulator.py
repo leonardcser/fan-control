@@ -2,13 +2,13 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import yaml
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict
 import logging
 
 from ..control.optimizer import Optimizer
-from .train import ThermalModel
+from ..models import load_model
+from ..models.base import DynamicThermalModel
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +20,13 @@ def run_simulation(model_path: Path, config: Dict, params: Dict, output_dir: Pat
     """
     Run a simulation of the optimizer against increasing loads.
     """
-    # Create optimizer
-    optimizer = Optimizer(model_path, config, params)
+    # Load model using registry
+    model_type = params["model"]["type"]
+    model_config = params["model"]
+    model = load_model(model_type, str(model_path), model_config)
+
+    # Create optimizer with loaded model
+    optimizer = Optimizer(model, config, params)
 
     # Load targets from params
     targets = params["controller"]["targets"]
@@ -61,16 +66,25 @@ def run_simulation(model_path: Path, config: Dict, params: Dict, output_dir: Pat
     print(f"Running simulation ({steps} steps)...")
 
     # Initialize previous state for continuity (Start at IDLE/MINIMUMS)
-    # This is more realistic than starting at 50%
     last_pwms = {}
     for name in optimizer.pwm_names:
         dev_cfg = config["devices"][name]
         last_pwms[name] = float(dev_cfg["min_pwm"])
 
+    # Simulate temperature state (for dynamic models)
+    T_cpu = 40.0  # Initial CPU temp
+    T_gpu = 35.0  # Initial GPU temp
+
     import time as time_module
 
     for t in range(steps):
-        state = {"P_cpu": p_cpu[t], "P_gpu": p_gpu[t], "T_amb": t_amb}
+        state = {
+            "P_cpu": p_cpu[t],
+            "P_gpu": p_gpu[t],
+            "T_amb": t_amb,
+            "T_cpu": T_cpu,
+            "T_gpu": T_gpu,
+        }
 
         # Optimize
         t_start = time_module.perf_counter()
@@ -81,18 +95,21 @@ def run_simulation(model_path: Path, config: Dict, params: Dict, output_dir: Pat
         # Update state for next iteration
         last_pwms = {k: float(v) for k, v in pwms.items()}
 
-        # Predict result temperature at this optimal point
-        full_input = state.copy()
-        full_input.update(pwms)
-        input_df = pd.DataFrame([full_input])
-        t_cpu_pred, t_gpu_pred = optimizer.model.predict(input_df)
+        # Predict next temperature using dynamic model
+        T_k = np.array([T_cpu, T_gpu])
+        PWM = np.array([pwms["pwm2"], pwms["pwm4"], pwms["pwm5"]])
+        P = np.array([p_cpu[t], p_gpu[t]])
+
+        T_next, _ = model.predict_next(T_k, PWM, P, t_amb)
+        T_cpu = T_next[0]
+        T_gpu = T_next[1]
 
         res = {
             "time": t,
             "P_cpu": state["P_cpu"],
             "P_gpu": state["P_gpu"],
-            "T_pred_cpu": t_cpu_pred[0],
-            "T_pred_gpu": t_gpu_pred[0],
+            "T_pred_cpu": T_cpu,
+            "T_pred_gpu": T_gpu,
             "opt_time_ms": opt_time,
             **pwms,
         }
@@ -108,7 +125,7 @@ def run_simulation(model_path: Path, config: Dict, params: Dict, output_dir: Pat
     generate_simulation_plots(df, targets, output_dir)
 
     # Generate Model Analysis Plots
-    generate_model_analysis_plots(optimizer.model, config, output_dir)
+    generate_model_analysis_plots(model, config, output_dir)
 
 
 def generate_simulation_plots(df: pd.DataFrame, targets: Dict, output_dir: Path):
@@ -166,7 +183,7 @@ def generate_simulation_plots(df: pd.DataFrame, targets: Dict, output_dir: Path)
 
     # Legend
     lines = l1 + l2 + [l3] + fan_lines
-    labs = [l.get_label() for l in lines]
+    labs = [str(l.get_label()) for l in lines]
     ax1.legend(lines, labs, loc="upper left", fontsize=8)
 
     plt.title("Simulation: CPU Thermal Response")
@@ -217,7 +234,7 @@ def generate_simulation_plots(df: pd.DataFrame, targets: Dict, output_dir: Path)
         fan_lines.extend(l)
 
     lines = l1 + l2 + [l3] + fan_lines
-    labs = [l.get_label() for l in lines]
+    labs = [str(l.get_label()) for l in lines]
     ax1.legend(lines, labs, loc="upper left", fontsize=8)
 
     plt.title("Simulation: GPU Thermal Response")
@@ -268,7 +285,7 @@ def generate_simulation_plots(df: pd.DataFrame, targets: Dict, output_dir: Path)
     print(f"Plots saved to {output_dir}/")
 
 
-def generate_model_analysis_plots(model: ThermalModel, config: Dict, output_dir: Path):
+def generate_model_analysis_plots(model: DynamicThermalModel, config: Dict, output_dir: Path):
     """
     Generate analysis plots to understand what the model has learned.
     Includes PWM impact, partial dependence, and fan efficiency plots.
@@ -287,7 +304,7 @@ def generate_model_analysis_plots(model: ThermalModel, config: Dict, output_dir:
     print(f"Model analysis plots saved to {output_dir}/")
 
 
-def plot_pwm_impact(model: ThermalModel, config: Dict, output_dir: Path):
+def plot_pwm_impact(model: DynamicThermalModel, config: Dict, output_dir: Path):
     """
     Plot the impact of each PWM channel on CPU and GPU temperatures.
     Varies each fan individually while holding others constant at their median.
@@ -296,12 +313,9 @@ def plot_pwm_impact(model: ThermalModel, config: Dict, output_dir: Path):
     pwm_names = list(devices.keys())
 
     # Define representative operating conditions
-    # Medium load scenario
-    base_state = {
-        "P_cpu": 100.0,  # Medium CPU load
-        "P_gpu": 150.0,  # Medium GPU load
-        "T_amb": 25.0,  # Room temperature
-    }
+    base_power = np.array([100.0, 150.0])  # [P_cpu, P_gpu]
+    t_amb = 25.0
+    T_k = np.array([60.0, 50.0])  # Starting temps
 
     # Set baseline fan speeds (median of their range)
     baseline_pwms = {}
@@ -329,17 +343,17 @@ def plot_pwm_impact(model: ThermalModel, config: Dict, output_dir: Path):
         temps_gpu = []
 
         for pwm_val in pwm_values:
-            # Create input with this fan at pwm_val, others at baseline
-            input_state = base_state.copy()
-            input_state.update(baseline_pwms)
-            input_state[pwm_name] = pwm_val
+            # Create PWM array with this fan varied
+            PWM = np.array([
+                pwm_val if "pwm2" == pwm_name else baseline_pwms["pwm2"],
+                pwm_val if "pwm4" == pwm_name else baseline_pwms["pwm4"],
+                pwm_val if "pwm5" == pwm_name else baseline_pwms["pwm5"],
+            ])
 
-            # Predict temperatures
-            input_df = pd.DataFrame([input_state])
-            t_cpu_pred, t_gpu_pred = model.predict(input_df)
-
-            temps_cpu.append(t_cpu_pred[0])
-            temps_gpu.append(t_gpu_pred[0])
+            # Predict next temperatures
+            T_next, _ = model.predict_next(T_k, PWM, base_power, t_amb)
+            temps_cpu.append(T_next[0])
+            temps_gpu.append(T_next[1])
 
         # Plot CPU impact
         ax_cpu.plot(
@@ -365,9 +379,9 @@ def plot_pwm_impact(model: ThermalModel, config: Dict, output_dir: Path):
 
     # Format CPU plot
     ax_cpu.set_xlabel("PWM (%)", fontsize=12)
-    ax_cpu.set_ylabel("CPU Temperature (°C)", fontsize=12)
+    ax_cpu.set_ylabel("Next CPU Temperature (°C)", fontsize=12)
     ax_cpu.set_title(
-        f"PWM Impact on CPU Temperature\n(P_cpu={base_state['P_cpu']}W, P_gpu={base_state['P_gpu']}W)",
+        f"PWM Impact on CPU Temperature\n(P_cpu={base_power[0]}W, P_gpu={base_power[1]}W)",
         fontsize=13,
     )
     ax_cpu.legend(loc="best")
@@ -375,9 +389,9 @@ def plot_pwm_impact(model: ThermalModel, config: Dict, output_dir: Path):
 
     # Format GPU plot
     ax_gpu.set_xlabel("PWM (%)", fontsize=12)
-    ax_gpu.set_ylabel("GPU Temperature (°C)", fontsize=12)
+    ax_gpu.set_ylabel("Next GPU Temperature (°C)", fontsize=12)
     ax_gpu.set_title(
-        f"PWM Impact on GPU Temperature\n(P_cpu={base_state['P_cpu']}W, P_gpu={base_state['P_gpu']}W)",
+        f"PWM Impact on GPU Temperature\n(P_cpu={base_power[0]}W, P_gpu={base_power[1]}W)",
         fontsize=13,
     )
     ax_gpu.legend(loc="best")
@@ -387,10 +401,10 @@ def plot_pwm_impact(model: ThermalModel, config: Dict, output_dir: Path):
     plt.savefig(output_dir / "model_pwm_impact.png", dpi=150)
     plt.close()
 
-    print(f"✓ PWM Impact plot generated")
+    print(f"  PWM Impact plot generated")
 
 
-def plot_partial_dependence(model: ThermalModel, config: Dict, output_dir: Path):
+def plot_partial_dependence(model: DynamicThermalModel, config: Dict, output_dir: Path):
     """
     Plot partial dependence for each feature to show how predicted temperature
     changes as each feature varies independently.
@@ -399,13 +413,11 @@ def plot_partial_dependence(model: ThermalModel, config: Dict, output_dir: Path)
     pwm_names = list(devices.keys())
 
     # Define baseline state
-    base_state = {
-        "P_cpu": 100.0,
-        "P_gpu": 150.0,
-        "T_amb": 25.0,
-    }
+    T_k = np.array([60.0, 50.0])
+    t_amb = 25.0
 
-    # Set baseline fan speeds
+    # Set baseline values
+    base_power = np.array([100.0, 150.0])
     baseline_pwms = {}
     for pwm_name in pwm_names:
         min_pwm = devices[pwm_name]["min_pwm"]
@@ -443,24 +455,38 @@ def plot_partial_dependence(model: ThermalModel, config: Dict, output_dir: Path)
         temps_gpu = []
 
         for feature_val in feature_range:
-            # Create input with this feature varied
-            input_state = base_state.copy()
-            input_state.update(baseline_pwms)
-            input_state[feature_name] = feature_val
+            # Set up inputs with this feature varied
+            if feature_name == "P_cpu":
+                P = np.array([feature_val, base_power[1]])
+                PWM = np.array([baseline_pwms["pwm2"], baseline_pwms["pwm4"], baseline_pwms["pwm5"]])
+                amb = t_amb
+            elif feature_name == "P_gpu":
+                P = np.array([base_power[0], feature_val])
+                PWM = np.array([baseline_pwms["pwm2"], baseline_pwms["pwm4"], baseline_pwms["pwm5"]])
+                amb = t_amb
+            elif feature_name == "T_amb":
+                P = base_power
+                PWM = np.array([baseline_pwms["pwm2"], baseline_pwms["pwm4"], baseline_pwms["pwm5"]])
+                amb = feature_val
+            else:  # PWM feature
+                P = base_power
+                PWM = np.array([
+                    feature_val if "pwm2" == feature_name else baseline_pwms["pwm2"],
+                    feature_val if "pwm4" == feature_name else baseline_pwms["pwm4"],
+                    feature_val if "pwm5" == feature_name else baseline_pwms["pwm5"],
+                ])
+                amb = t_amb
 
-            # Predict temperatures
-            input_df = pd.DataFrame([input_state])
-            t_cpu_pred, t_gpu_pred = model.predict(input_df)
-
-            temps_cpu.append(t_cpu_pred[0])
-            temps_gpu.append(t_gpu_pred[0])
+            T_next, _ = model.predict_next(T_k, PWM, P, amb)
+            temps_cpu.append(T_next[0])
+            temps_gpu.append(T_next[1])
 
         # Plot both CPU and GPU on same axis
         ax.plot(feature_range, temps_cpu, label="CPU", color="red", linewidth=2)
         ax.plot(feature_range, temps_gpu, label="GPU", color="green", linewidth=2)
 
         ax.set_xlabel(feature_label, fontsize=10)
-        ax.set_ylabel("Temperature (°C)", fontsize=10)
+        ax.set_ylabel("Next Temperature (°C)", fontsize=10)
         ax.set_title(f"Partial Dependence: {feature_label}", fontsize=11)
         ax.legend(loc="best", fontsize=9)
         ax.grid(True, alpha=0.3)
@@ -473,10 +499,10 @@ def plot_partial_dependence(model: ThermalModel, config: Dict, output_dir: Path)
     plt.savefig(output_dir / "model_partial_dependence.png", dpi=150)
     plt.close()
 
-    print(f"✓ Partial Dependence plots generated")
+    print(f"  Partial Dependence plots generated")
 
 
-def plot_fan_efficiency(model: ThermalModel, config: Dict, output_dir: Path):
+def plot_fan_efficiency(model: DynamicThermalModel, config: Dict, output_dir: Path):
     """
     Plot fan efficiency: cooling effectiveness per PWM unit.
     Calculates temperature reduction per 10% PWM increase for each fan.
@@ -485,11 +511,9 @@ def plot_fan_efficiency(model: ThermalModel, config: Dict, output_dir: Path):
     pwm_names = list(devices.keys())
 
     # Define test conditions
-    base_state = {
-        "P_cpu": 100.0,
-        "P_gpu": 150.0,
-        "T_amb": 25.0,
-    }
+    T_k = np.array([60.0, 50.0])
+    base_power = np.array([100.0, 150.0])
+    t_amb = 25.0
 
     # Set baseline fan speeds
     baseline_pwms = {}
@@ -505,27 +529,29 @@ def plot_fan_efficiency(model: ThermalModel, config: Dict, output_dir: Path):
         min_pwm = devices[pwm_name]["min_pwm"]
 
         # Measure temperature at low and high PWM
-        pwm_low = min_pwm + 10.0  # Start 10% above minimum
-        pwm_high = min(min_pwm + 30.0, 100.0)  # 20% increase, capped at 100%
+        pwm_low = min_pwm + 10.0
+        pwm_high = min(min_pwm + 30.0, 100.0)
 
         # Get temps at low PWM
-        input_state_low = base_state.copy()
-        input_state_low.update(baseline_pwms)
-        input_state_low[pwm_name] = pwm_low
-        df_low = pd.DataFrame([input_state_low])
-        t_cpu_low, t_gpu_low = model.predict(df_low)
+        PWM_low = np.array([
+            pwm_low if "pwm2" == pwm_name else baseline_pwms["pwm2"],
+            pwm_low if "pwm4" == pwm_name else baseline_pwms["pwm4"],
+            pwm_low if "pwm5" == pwm_name else baseline_pwms["pwm5"],
+        ])
+        T_next_low, _ = model.predict_next(T_k, PWM_low, base_power, t_amb)
 
         # Get temps at high PWM
-        input_state_high = base_state.copy()
-        input_state_high.update(baseline_pwms)
-        input_state_high[pwm_name] = pwm_high
-        df_high = pd.DataFrame([input_state_high])
-        t_cpu_high, t_gpu_high = model.predict(df_high)
+        PWM_high = np.array([
+            pwm_high if "pwm2" == pwm_name else baseline_pwms["pwm2"],
+            pwm_high if "pwm4" == pwm_name else baseline_pwms["pwm4"],
+            pwm_high if "pwm5" == pwm_name else baseline_pwms["pwm5"],
+        ])
+        T_next_high, _ = model.predict_next(T_k, PWM_high, base_power, t_amb)
 
         # Calculate efficiency (temperature reduction per 10% PWM increase)
         pwm_delta = pwm_high - pwm_low
-        cpu_efficiency = -(t_cpu_high[0] - t_cpu_low[0]) / pwm_delta * 10.0
-        gpu_efficiency = -(t_gpu_high[0] - t_gpu_low[0]) / pwm_delta * 10.0
+        cpu_efficiency = -(T_next_high[0] - T_next_low[0]) / pwm_delta * 10.0
+        gpu_efficiency = -(T_next_high[1] - T_next_low[1]) / pwm_delta * 10.0
 
         efficiencies_cpu.append(cpu_efficiency)
         efficiencies_gpu.append(gpu_efficiency)
@@ -582,4 +608,4 @@ def plot_fan_efficiency(model: ThermalModel, config: Dict, output_dir: Path):
     plt.savefig(output_dir / "model_fan_efficiency.png", dpi=150)
     plt.close()
 
-    print(f"✓ Fan Efficiency comparison generated")
+    print(f"  Fan Efficiency comparison generated")

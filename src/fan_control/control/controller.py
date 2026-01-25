@@ -39,8 +39,14 @@ class FanController:
             ambient_config=self.config["ambient"],
         )
 
-        # Initialize Optimizer
-        self.optimizer = Optimizer(model_path, self.config, self.params)
+        # Initialize Optimizer with model from registry
+        model_type = self.params["model"]["type"]
+        self.optimizer = Optimizer.from_path(
+            model_path=model_path,
+            model_type=model_type,
+            config=self.config,
+            params=self.params,
+        )
 
         # Load targets and interval from params
         self.targets = self.params["controller"]["targets"]
@@ -109,12 +115,15 @@ class FanController:
     def _read_sensors(self) -> Optional[Dict[str, float]]:
         """Read current system state."""
         try:
+            p_cpu = self.hw.get_cpu_power()
+            p_gpu = self.hw.get_gpu_power()
+            t_amb = self.hw.get_ambient_temp()
             return {
-                "P_cpu": self.hw.get_cpu_power() or 0.0,
-                "P_gpu": self.hw.get_gpu_power() or 0.0,
-                "T_amb": self.hw.get_ambient_temp() or 25.0,  # Fallback to 25C
-                "T_cpu": self.hw.get_cpu_temp(),
-                "T_gpu": self.hw.get_gpu_temp(),
+                "P_cpu": float(p_cpu) if p_cpu else 0.0,
+                "P_gpu": float(p_gpu) if p_gpu else 0.0,
+                "T_amb": float(t_amb) if t_amb else 25.0,
+                "T_cpu": float(self.hw.get_cpu_temp()),
+                "T_gpu": float(self.hw.get_gpu_temp()),
             }
         except Exception as e:
             logger.error(f"Sensor read error: {e}")
@@ -169,7 +178,7 @@ class FanController:
             pwm_num = self.config["devices"][name]["pwm_number"]
             self.hw.set_fan_speed(pwm_num, value)
 
-    def _shutdown(self, signum, frame):
+    def _shutdown(self, _signum, _frame):
         """Graceful shutdown handler."""
         logger.info("Shutdown signal received. Stopping...")
         self.running = False
