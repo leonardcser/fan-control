@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 
-from .collector import DataCollector
+from .collector import EpisodeCollector
 from .hardware import HardwareController
 from .load import LoadOrchestrator
 from .safety import SafetyMonitor, SafetyError
@@ -157,8 +157,8 @@ def main() -> None:
                 raise Exception("Failed to enable manual control")
             print(f"✓ Manual control enabled for {dev_cfg['name']}")
 
-        # Initialize data collector
-        collector = DataCollector(
+        # Initialize episode collector for time-series data
+        collector = EpisodeCollector(
             hardware,
             load_orchestrator,
             safety,
@@ -171,7 +171,7 @@ def main() -> None:
             output_dir.mkdir(parents=True, exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_name = f"fan_control_{timestamp}"
+        run_name = f"dynamics_{timestamp}"
         run_dir = output_dir / run_name
 
         with drop_privileges():

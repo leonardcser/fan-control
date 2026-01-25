@@ -1,74 +1,60 @@
-"""Data models for thermal data collection."""
+"""Data models for time-series thermal data collection."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 
 @dataclass
-class MeasurementPoint:
-    """
-    Single steady-state measurement point for thermal model fitting.
-
-    Corresponds to the data collection schema in PHYSICS_MODEL.md.
-    Each row represents one steady-state measurement after thermal equilibrium.
-    """
+class TimeSeriesSample:
+    """Single 1-second sample for MPC model training."""
 
     timestamp: float  # Unix timestamp
+    episode_id: str  # Groups samples into sequences
+    sample_index: int  # Index within episode (0, 1, 2, ...)
 
-    # Control variables (PWM values: 0-255)
-    pwm_values: dict[str, int]  # Map: {"pwm2": 128, "pwm4": 100, ...}
+    # State (temperatures)
+    T_cpu: float
+    T_gpu: float
 
-    # Power measurements (Watts)
-    P_cpu: float  # CPU package power draw
-    P_gpu: float  # GPU power draw
+    # Control inputs (PWM 0-255)
+    pwm2: int
+    pwm4: int
+    pwm5: int
 
-    # Temperature measurements (°C)
-    T_cpu: float  # CPU temperature
-    T_gpu: float  # GPU temperature
+    # Disturbances - aggregate power
+    P_cpu: float
+    P_gpu: float
+    T_amb: Optional[float]
 
-    # Load settings (flags)
-    cpu_load_flags: str  # Stress flags (e.g. "--cpu 6")
-    gpu_load_flags: str  # gpu_load.py flags (e.g. "--load 50 --memory 30")
-    cpu_cores: int  # Number of CPU cores under load (parsed from cpu_load_flags)
+    # Per-core CPU metrics (all kept for detailed modeling)
+    P_cpu_cores: Optional[dict[int, float]] = None  # Per-core power (watts)
+    cpu_avg_mhz: Optional[dict[int, float]] = None  # Per-core avg frequency
+    cpu_bzy_mhz: Optional[dict[int, float]] = None  # Per-core busy frequency
+    cpu_busy_pct: Optional[dict[int, float]] = None  # Per-core busy percentage
+
+    # GPU metrics
+    gpu_fan_speed: Optional[int] = None
 
     # Metadata
-    stabilization_time: float  # Time waited for equilibrium (seconds)
-
-    # Optional fields with defaults
-    P_cpu_cores: Optional[dict[int, float]] = None  # Per-core power: {core_num: watts}
-    cpu_avg_mhz: Optional[dict[int, float]] = None  # Per-core avg frequency: {core_num: MHz}
-    cpu_bzy_mhz: Optional[dict[int, float]] = None  # Per-core busy frequency: {core_num: MHz}
-    cpu_busy_pct: Optional[dict[int, float]] = None  # Per-core busy %: {core_num: percent}
-    T_amb: Optional[float] = None  # Ambient temperature
-    gpu_fan_speed: Optional[int] = None  # GPU fan speed (percentage)
-
-    # Equilibration tracking
-    equilibrated: bool = True  # Was equilibrium reached?
-    equilibration_reason: Optional[str] = (
-        None  # "equilibrated", "timeout_after_120s", etc.
-    )
-
-    description: str = ""
+    load_description: str = ""
+    cpu_load_flags: str = ""
+    gpu_load_flags: str = ""
 
     def to_dict(self) -> dict:
         """Convert to dictionary for CSV export."""
         d = {
             "timestamp": self.timestamp,
+            "episode_id": self.episode_id,
+            "sample_index": self.sample_index,
+            "T_cpu": self.T_cpu,
+            "T_gpu": self.T_gpu,
+            "pwm2": self.pwm2,
+            "pwm4": self.pwm4,
+            "pwm5": self.pwm5,
             "P_cpu": self.P_cpu,
             "P_gpu": self.P_gpu,
             "T_amb": self.T_amb,
-            "T_cpu": self.T_cpu,
-            "T_gpu": self.T_gpu,
-            "gpu_fan_speed": self.gpu_fan_speed,
-            "cpu_load_flags": self.cpu_load_flags,
-            "gpu_load_flags": self.gpu_load_flags,
-            "cpu_cores": self.cpu_cores,
-            "stabilization_time": self.stabilization_time,
-            "equilibrated": self.equilibrated,
-            "equilibration_reason": self.equilibration_reason,
-            "description": self.description,
         }
-        d.update(self.pwm_values)
 
         # Add per-core power columns
         if self.P_cpu_cores:
@@ -88,14 +74,18 @@ class MeasurementPoint:
             for core_num, pct in self.cpu_busy_pct.items():
                 d[f"cpu_busy_pct_core{core_num}"] = pct
 
+        d["gpu_fan_speed"] = self.gpu_fan_speed
+        d["load_description"] = self.load_description
+        d["cpu_load_flags"] = self.cpu_load_flags
+        d["gpu_load_flags"] = self.gpu_load_flags
+
         return d
 
     @staticmethod
-    def csv_header(device_keys: list[str], num_cores: int = 12) -> list[str]:
+    def csv_header(num_cores: int = 12) -> list[str]:
         """Get CSV header columns.
 
         Args:
-            device_keys: List of device IDs (e.g., ["pwm2", "pwm4"])
             num_cores: Number of CPU cores for per-core columns (default: 12)
         """
         # Generate per-core column names
@@ -107,50 +97,48 @@ class MeasurementPoint:
         return (
             [
                 "timestamp",
-            ]
-            + device_keys
-            + [
+                "episode_id",
+                "sample_index",
+                "T_cpu",
+                "T_gpu",
+                "pwm2",
+                "pwm4",
+                "pwm5",
                 "P_cpu",
                 "P_gpu",
+                "T_amb",
             ]
             + core_power_cols
             + core_avg_mhz_cols
             + core_bzy_mhz_cols
             + core_busy_pct_cols
             + [
-                "T_amb",
-                "T_cpu",
-                "T_gpu",
                 "gpu_fan_speed",
+                "load_description",
                 "cpu_load_flags",
                 "gpu_load_flags",
-                "cpu_cores",
-                "stabilization_time",
-                "equilibrated",
-                "equilibration_reason",
-                "description",
             ]
         )
 
 
 @dataclass
-class TestPoint:
-    """A test configuration to measure."""
+class Episode:
+    """Metadata for a collection episode."""
 
-    pwm_values: dict[str, int]  # 0-100 percentage
-    cpu_load_flags: str  # stress flags
-    gpu_load_flags: str  # gpu_load.py flags
-    cpu_cores: int = 0  # Number of CPU cores under load
-    description: str = ""
+    episode_id: str
+    start_timestamp: float
+    end_timestamp: float
+    load_description: str
+    num_samples: int
+    aborted: bool = False
+    abort_reason: Optional[str] = None
 
 
 @dataclass
-class SafetyCheck:
-    """Result of a safety check."""
+class PWMStep:
+    """A planned PWM change in the schedule."""
 
-    safe: bool
-    reason: str = ""
-    cpu_temp: Optional[float] = None
-    gpu_temp: Optional[float] = None
-    cpu_power: Optional[float] = None
-    gpu_power: Optional[float] = None
+    time_offset: float  # Seconds from episode start
+    pwm_values: dict[str, int] = field(default_factory=dict)  # Target PWM values (0-255)
+
+

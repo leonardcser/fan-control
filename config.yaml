@@ -89,14 +89,12 @@ plot_config:
     cpu_fans: ["pwm2"] # Primary fans affecting CPU cooling
     gpu_fans: ["pwm4", "pwm5"] # Primary fans affecting GPU cooling
 
-# Data collection test matrix
+# Time-series data collection for MPC thermal modeling
 data_collection:
-  # Fan/pump speed levels to test (percentage: 0-100)
-  # Denser sampling in lower range where fans matter most (diminishing returns above ~60%)
+  # PWM ranges (percentage: 0-100)
   pwm2_levels: [20, 30, 40, 60, 100]
   pwm4_levels: [0, 15, 30, 50, 80]
   pwm5_levels: [0, 15, 30, 50, 100]
-  # pwm7_levels: [40, 60, 80, 100]
 
   # Load levels to test
   # Note: cpu_load accepts 'stress' flags (e.g. '--cpu 6')
@@ -161,41 +159,18 @@ data_collection:
       gpu_load: "--load 100"
       description: "ML Training"
 
-  # Measurement parameters
-  equilibration_check_interval: 1 # How often to sample temperature (seconds)
-  equilibration_window: 10.0 # Window to check stability (seconds)
-  equilibration_threshold:
-    cpu: 0.5 # Max CPU temp change for equilibrium (°C) - relaxed for dynamic CPUs
-    gpu: 1.0 # Max GPU temp change for equilibrium (°C) - higher since GPU is more stable
-  equilibration_max_wait: 60 # Maximum wait time before timeout (seconds) - reduced since threshold is looser
-  equilibration_min_wait: 15 # Minimum wait before checking (seconds)
-  load_stabilization_time: 10 # Time to wait after starting load (seconds)
-  measurement_duration: 5 # How long to measure after stabilization (seconds)
-  sample_interval: 1 # Sampling interval during measurement (seconds)
+  # Time-series collection parameters
+  sample_interval: 1.0 # Seconds between samples (1Hz)
+  episode_duration: 180 # Episode length in seconds (3 minutes)
+  episodes_per_load: 3 # Number of episodes per load level
+  load_stabilization_time: 5 # Wait after load change before episode
 
-  # Sampling configuration (two-phase approach)
-  # Phase 1: Single fan sweep (optional) - run each fan alone at varying speeds, others at min
-  # Phase 2: Contrast sampling (always) - fill in with samples biased toward lower fan speeds
-  num_samples_per_load: 50 # Target number of data points per load level
-
-  # Phase 1: Single Fan Sweep - each fan sweeps through these steps while others at min
-  enable_single_fan_sweep: true # Enable/disable Phase 1 (one fan varies, others at min)
-  single_fan_sweep_steps: [100, 60, 20, 0] # Percentages of each fan's range (from pwmX_levels)
-  single_fan_sweep_repeats: 2 # Number of times to repeat the sweep (for noise averaging)
-
-  # Phase 1b: Max Fan Sweep - each fan sweeps through steps while others at max (100%)
-  enable_max_fan_sweep: true # Enable/disable Phase 1b (one fan varies, others at max)
-  max_fan_sweep_steps: [100, 60, 20, 0] # Percentages of each fan's range
-  max_fan_sweep_repeats: 2 # Number of times to repeat the sweep
+  # PWM schedule generation
+  pwm_schedule:
+    min_hold_time: 20 # Minimum seconds at each PWM level
+    max_hold_time: 60 # Maximum seconds at each PWM level
 
   sampling_seed: 42
-
-  # Phase 2: Contrast Sampling - 1-2 fans high, rest low
-  # This creates data where individual fan contributions are visible
-  contrast_sampling:
-    num_high_fans: [1, 2] # Randomly pick 1 or 2 fans to be "high" per sample
-    high_range: [60, 100] # High fans sample uniformly from this % range
-    low_range: [0, 40] # Low fans sample (beta-biased toward low end) from this % range
 
 # Safety limits - abort data point and restore safe speeds if exceeded
 safety:

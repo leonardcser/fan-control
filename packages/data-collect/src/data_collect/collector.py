@@ -1,118 +1,119 @@
-"""Data collection for thermal model fitting."""
+"""Time-series data collection for MPC thermal model training."""
 
 import csv
-import re
 import time
-from collections import deque
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 
 import numpy as np
 from tqdm import tqdm
 
 from .hardware import HardwareController
 from .load import LoadOrchestrator
-from .safety import SafetyMonitor, AbortPointError
-from .models import MeasurementPoint, SafetyCheck, TestPoint
+from .models import Episode, PWMStep, TimeSeriesSample
+from .safety import AbortPointError, SafetyMonitor
 from .utils import drop_privileges
 
 
-def _parse_cpu_cores(cpu_load_flags: str) -> int:
-    """
-    Extract core count from cpu_load_flags (e.g., '--cpu 6' -> 6).
+class PWMScheduleGenerator:
+    """Generates PWM step sequences for episodes."""
 
-    Args:
-        cpu_load_flags: stress flags string
-
-    Returns:
-        Number of cores, or 0 if not specified (idle)
-    """
-    if not cpu_load_flags:
-        return 0
-    match = re.search(r"--cpu\s+(\d+)", cpu_load_flags)
-    return int(match.group(1)) if match else 0
-
-
-class TemperatureWindow:
-    """Maintains a sliding window of temperature readings for equilibration detection."""
-
-    def __init__(self, window_duration: float, check_interval: float):
-        self.window_duration = window_duration
-        self.check_interval = check_interval
-        self.max_samples = int(window_duration / check_interval) + 1
-
-        # Separate queues for CPU and GPU
-        self.cpu_temps = deque(maxlen=self.max_samples)
-        self.gpu_temps = deque(maxlen=self.max_samples)
-        self.timestamps = deque(maxlen=self.max_samples)
-
-    def add_reading(
-        self, cpu_temp: Optional[float], gpu_temp: Optional[float], timestamp: float
-    ) -> None:
-        """Add a temperature reading to the window."""
-        self.cpu_temps.append(cpu_temp)
-        self.gpu_temps.append(gpu_temp)
-        self.timestamps.append(timestamp)
-
-    def is_full(self) -> bool:
-        """Check if window has enough data for stability check."""
-        return len(self.timestamps) >= self.max_samples
-
-    def check_equilibration(self, cpu_threshold: float, gpu_threshold: float) -> Tuple[bool, dict]:
-        """
-        Check if temperatures have equilibrated.
+    def __init__(self, devices: dict, schedule_config: dict, data_config: dict):
+        """Initialize schedule generator.
 
         Args:
-            cpu_threshold: Maximum temperature range for CPU equilibration (°C)
-            gpu_threshold: Maximum temperature range for GPU equilibration (°C)
+            devices: Device configuration dict from config.yaml
+            schedule_config: pwm_schedule config (min_hold_time, max_hold_time)
+            data_config: data_collection config (contains pwmX_levels)
+        """
+        self.devices = devices
+        self.min_hold = schedule_config["min_hold_time"]
+        self.max_hold = schedule_config["max_hold_time"]
+
+        # Get PWM ranges for each device from configured levels
+        self.pwm_ranges: dict[str, tuple[int, int]] = {}
+        for device_key in devices.keys():
+            levels = data_config[f"{device_key}_levels"]
+            # Convert percentage (0-100) to PWM (0-255)
+            min_pwm = int(round(min(levels) * 255 / 100))
+            max_pwm = int(round(max(levels) * 255 / 100))
+            self.pwm_ranges[device_key] = (min_pwm, max_pwm)
+
+    def _random_pwm(self, rng: np.random.Generator) -> dict[str, int]:
+        """Generate random PWM values for all devices."""
+        pwm_values = {}
+        for device_key, (min_pwm, max_pwm) in self.pwm_ranges.items():
+            pwm = rng.integers(min_pwm, max_pwm + 1)
+            # Check stall threshold
+            stall_pwm = int(round(self.devices[device_key]["stall_pwm"] * 255 / 100))
+            if 0 < pwm < stall_pwm:
+                pwm = 0
+            pwm_values[device_key] = int(pwm)
+        return pwm_values
+
+    def _step_change(
+        self, current_pwm: dict[str, int], rng: np.random.Generator
+    ) -> dict[str, int]:
+        """Generate a step change from current PWM (modify 1-2 fans randomly)."""
+        new_pwm = current_pwm.copy()
+        device_keys = list(self.pwm_ranges.keys())
+
+        # Randomly choose 1 or 2 fans to modify
+        num_to_change = rng.choice([1, 2])
+        fans_to_change = rng.choice(device_keys, size=num_to_change, replace=False)
+
+        for device_key in fans_to_change:
+            min_pwm, max_pwm = self.pwm_ranges[device_key]
+            new_val = rng.integers(min_pwm, max_pwm + 1)
+            # Check stall threshold
+            stall_pwm = int(round(self.devices[device_key]["stall_pwm"] * 255 / 100))
+            if 0 < new_val < stall_pwm:
+                new_val = 0
+            new_pwm[device_key] = int(new_val)
+
+        return new_pwm
+
+    def generate(self, episode_duration: float, seed: int) -> list[PWMStep]:
+        """Generate random step schedule for an episode.
+
+        Args:
+            episode_duration: Episode length in seconds
+            seed: Random seed for reproducibility
 
         Returns:
-            (is_equilibrated, details_dict)
+            List of PWMStep objects with time offsets and PWM values
         """
-        if not self.is_full():
-            return False, {
-                "cpu_range": None,
-                "gpu_range": None,
-                "num_samples": len(self.timestamps),
-            }
+        rng = np.random.default_rng(seed)
+        steps = []
+        t = 0.0
 
-        # Filter out None values
-        cpu_valid = [t for t in self.cpu_temps if t is not None]
-        gpu_valid = [t for t in self.gpu_temps if t is not None]
+        # Initial random PWM
+        current_pwm = self._random_pwm(rng)
+        steps.append(PWMStep(time_offset=0.0, pwm_values=current_pwm))
 
-        # Calculate ranges (max - min)
-        cpu_range = max(cpu_valid) - min(cpu_valid) if cpu_valid else None
-        gpu_range = max(gpu_valid) - min(gpu_valid) if gpu_valid else None
+        while t < episode_duration:
+            hold_time = rng.uniform(self.min_hold, self.max_hold)
+            t += hold_time
+            if t >= episode_duration:
+                break
 
-        # Check stability with separate thresholds
-        cpu_stable = cpu_range is not None and cpu_range < cpu_threshold
-        gpu_stable = gpu_range is not None and gpu_range < gpu_threshold
+            # Step change: modify 1-2 fans randomly
+            new_pwm = self._step_change(current_pwm, rng)
+            steps.append(PWMStep(time_offset=t, pwm_values=new_pwm))
+            current_pwm = new_pwm
 
-        # Equilibrated if both stable (or one missing but other stable)
-        is_equilibrated = (
-            (cpu_stable and gpu_stable)
-            or (cpu_range is None and gpu_stable)
-            or (gpu_range is None and cpu_stable)
-        )
-
-        return is_equilibrated, {
-            "cpu_range": cpu_range,
-            "gpu_range": gpu_range,
-            "cpu_stable": cpu_stable,
-            "gpu_stable": gpu_stable,
-            "num_samples": len(self.timestamps),
-        }
+        return steps
 
 
-class DataCollector:
-    """Collect thermal data for model fitting."""
+class EpisodeCollector:
+    """Collect time-series episodes for MPC model training."""
 
     def __init__(
         self,
         hardware: HardwareController,
         load_orchestrator: LoadOrchestrator,
         safety: SafetyMonitor,
-        config: Dict,
+        config: dict,
     ):
         self.hardware = hardware
         self.load_orchestrator = load_orchestrator
@@ -121,642 +122,300 @@ class DataCollector:
 
         # Extract configuration
         self.data_config = config["data_collection"]
-        self.safety_config = config["safety"]
-        self.hw_config = config["hardware"]
         self.devices = config["devices"]
-        self.load_stabilization_time = self.data_config[
-            "load_stabilization_time"
-        ]
+
+        # Time-series parameters
+        self.sample_interval = self.data_config["sample_interval"]
+        self.episode_duration = self.data_config["episode_duration"]
+        self.episodes_per_load = self.data_config["episodes_per_load"]
         self.sampling_seed = self.data_config["sampling_seed"]
 
-        # Dynamic equilibration config
-        self.eq_check_interval = self.data_config[
-            "equilibration_check_interval"
-        ]
-        self.eq_window = self.data_config["equilibration_window"]
-
-        # Separate thresholds for CPU and GPU
-        eq_threshold_cfg = self.data_config["equilibration_threshold"]
-        self.eq_threshold_cpu = eq_threshold_cfg["cpu"]
-        self.eq_threshold_gpu = eq_threshold_cfg["gpu"]
-
-        self.eq_max_wait = self.data_config["equilibration_max_wait"]
-        self.eq_min_wait = self.data_config["equilibration_min_wait"]
-
-        # Phase control configuration
-        self.enable_single_fan_sweep = self.data_config["enable_single_fan_sweep"]
-        self.enable_max_fan_sweep = self.data_config["enable_max_fan_sweep"]
+        # PWM schedule generator
+        self.schedule_generator = PWMScheduleGenerator(
+            self.devices,
+            self.data_config["pwm_schedule"],
+            self.data_config,
+        )
 
         # Data storage
-        self.measurements: List[MeasurementPoint] = []
+        self.samples: list[TimeSeriesSample] = []
+        self.episodes: list[Episode] = []
 
-    def generate_test_points_for_load(
-        self, cpu_load_flags: str, gpu_load_flags: str, description: str
-    ):
-        """
-        Generator that yields test points for a specific load level.
+        # Episode counter for seed variation
+        self._episode_counter = 0
 
-        Uses a two-phase sampling approach (togglable):
-        1. Single fan sweep (optional): Each fan varies from min to max, others at min
-        2. Contrast sampling (always): Latin Hypercube samples biased toward lower fan speeds
-
-        This allows replacing skipped/aborted points to maintain target sample count.
+    def _apply_pwm(self, pwm_values: dict[str, int]) -> bool:
+        """Apply PWM values to all devices.
 
         Args:
-            cpu_load_flags: CPU load flags (stress)
-            gpu_load_flags: GPU load flags (gpu_load.py)
-            description: Load description
-
-        Yields:
-            TestPoint instances
-        """
-        device_keys = list(self.devices.keys())
-        num_devices = len(device_keys)
-
-        # Collect PWM ranges for each device
-        levels = [np.array(self.data_config[f"{k}_levels"]) for k in device_keys]
-
-        # Parse cpu_cores once for this load level
-        cpu_cores = _parse_cpu_cores(cpu_load_flags)
-
-        # Get min/max for each device from configured levels (needed by Phase 1 and 2)
-        device_ranges = {}
-        for key in device_keys:
-            lvl = self.data_config[f"{key}_levels"]
-            device_ranges[key] = {"min": min(lvl), "max": max(lvl)}
-
-        # Helper to convert percentage of range to PWM value (shared by Phase 1 and 2)
-        def pct_to_pwm(key: str, pct: float) -> int:
-            r = device_ranges[key]
-            value = r["min"] + (pct / 100.0) * (r["max"] - r["min"])
-            speed = int(round(value))
-            # Clamp to 0 if below stall_pwm (fan would stall)
-            stall_pwm = self.devices[key]["stall_pwm"]
-            if 0 < speed < stall_pwm:
-                speed = 0
-            return speed
-
-        # === Phase 1: Single Fan Sweep (Optional) ===
-        # Run each fan individually at varying speeds (min to max), others at their minimum configured level
-        # This identifies each fan's cooling contribution while maintaining baseline cooling
-        if self.enable_single_fan_sweep:
-            num_repeats = self.data_config["single_fan_sweep_repeats"]
-
-            # First, generate unique points (deduplicated)
-            unique_points = []
-            seen_points = set()
-            for sweep_key in device_keys:
-                for step_pct in self.data_config["single_fan_sweep_steps"]:
-                    pwm_map = {}
-                    for key in device_keys:
-                        if key == sweep_key:
-                            pwm_map[key] = pct_to_pwm(key, step_pct)
-                        else:
-                            pwm_map[key] = device_ranges[key]["min"]
-
-                    point_tuple = tuple(pwm_map[k] for k in device_keys)
-                    if point_tuple not in seen_points:
-                        seen_points.add(point_tuple)
-                        unique_points.append(pwm_map)
-
-            # Then yield each unique point num_repeats times
-            for _repeat in range(num_repeats):
-                for pwm_map in unique_points:
-                    yield TestPoint(
-                        pwm_values=pwm_map.copy(),
-                        cpu_load_flags=cpu_load_flags,
-                        gpu_load_flags=gpu_load_flags,
-                        cpu_cores=cpu_cores,
-                        description=description,
-                    )
-
-        # === Phase 1b: Max Fan Sweep (Optional) ===
-        # Run each fan individually at varying speeds (max to min), others at their maximum (100%)
-        # This identifies each fan's cooling contribution when other fans provide maximum cooling
-        if self.enable_max_fan_sweep:
-            num_repeats = self.data_config["max_fan_sweep_repeats"]
-            max_sweep_steps = self.data_config["max_fan_sweep_steps"]
-
-            # First, generate unique points (deduplicated)
-            unique_points = []
-            seen_points = set()
-            for sweep_key in device_keys:
-                for step_pct in max_sweep_steps:
-                    pwm_map = {}
-                    for key in device_keys:
-                        if key == sweep_key:
-                            pwm_map[key] = pct_to_pwm(key, step_pct)
-                        else:
-                            # Others at max (100%)
-                            pwm_map[key] = device_ranges[key]["max"]
-
-                    point_tuple = tuple(pwm_map[k] for k in device_keys)
-                    if point_tuple not in seen_points:
-                        seen_points.add(point_tuple)
-                        unique_points.append(pwm_map)
-
-            # Then yield each unique point num_repeats times
-            for _repeat in range(num_repeats):
-                for pwm_map in unique_points:
-                    yield TestPoint(
-                        pwm_values=pwm_map.copy(),
-                        cpu_load_flags=cpu_load_flags,
-                        gpu_load_flags=gpu_load_flags,
-                        cpu_cores=cpu_cores,
-                        description=description,
-                    )
-
-        # === Phase 2: Contrast Sampling ===
-        # Generate samples with contrast: 1-2 fans high, rest low
-        # This ensures we capture each fan's individual contribution
-        contrast_config = self.data_config["contrast_sampling"]
-        num_high_fans_choices = contrast_config["num_high_fans"]
-        high_range = contrast_config["high_range"]
-        low_range = contrast_config["low_range"]
-
-        batch_size = self.data_config["num_samples_per_load"]
-        batch_num = 0
-
-        while True:
-            seed = self.sampling_seed + batch_num
-            rng = np.random.default_rng(seed=seed)
-
-            for _ in range(batch_size):
-                # Randomly choose how many fans will be "high" (1 or 2)
-                num_high = rng.choice(num_high_fans_choices)
-
-                # Randomly select which fans will be high
-                high_fan_indices = rng.choice(
-                    num_devices, size=num_high, replace=False
-                )
-
-                pwm_map = {}
-                for i, key in enumerate(device_keys):
-                    lvl = levels[i]
-                    lvl_min, lvl_max = lvl.min(), lvl.max()
-
-                    if i in high_fan_indices:
-                        # High fan: uniform sample from high_range (as % of device range)
-                        pct = rng.uniform(high_range[0], high_range[1]) / 100.0
-                    else:
-                        # Low fan: beta-biased sample from low_range
-                        # Beta(2, 5) biases toward lower end of the range
-                        beta_val = rng.beta(2.0, 5.0)
-                        low_pct_range = (low_range[1] - low_range[0]) / 100.0
-                        pct = (low_range[0] / 100.0) + beta_val * low_pct_range
-
-                    # Convert percentage to actual PWM value
-                    speed = int(round(lvl_min + pct * (lvl_max - lvl_min)))
-
-                    # Clamp: if below stall_pwm but > 0, set to 0 (fan would stall)
-                    stall_pwm = self.devices[key]["stall_pwm"]
-                    if 0 < speed < stall_pwm:
-                        speed = 0
-
-                    pwm_map[key] = speed
-
-                yield TestPoint(
-                    pwm_values=pwm_map,
-                    cpu_load_flags=cpu_load_flags,
-                    gpu_load_flags=gpu_load_flags,
-                    cpu_cores=cpu_cores,
-                    description=description,
-                )
-
-            batch_num += 1
-
-    def is_safe_test_point(
-        self, point: TestPoint, current_power: Optional[tuple] = None
-    ) -> SafetyCheck:
-        """
-        Check if a test point is safe to execute.
-
-        Implements safety constraints from PHYSICS_MODEL.md to avoid overheating.
-
-        Args:
-            point: Test point to check
-            current_power: Optional (cpu_power, gpu_power) if already measured
+            pwm_values: Dict mapping device keys to PWM values (0-255)
 
         Returns:
-            SafetyCheck result
+            True if all succeeded, False otherwise
         """
-        cpu_power, gpu_power = current_power or (None, None)
+        for device_key, pwm_value in pwm_values.items():
+            pwm_num = self.devices[device_key]["pwm_number"]
+            # Convert 0-255 to percentage for hardware API
+            pct = int(round(pwm_value * 100 / 255))
+            if not self.hardware.set_fan_speed(pwm_num, pct):
+                tqdm.write(f"Failed to set {device_key} (PWM{pwm_num}) to {pct}%")
+                return False
+        return True
 
-        # Check minimum total cooling effort
-        total_cooling = sum(point.pwm_values.values())
-        min_effort = self.safety_config["min_total_cooling_effort"]
-
-        if total_cooling < min_effort:
-            return SafetyCheck(
-                safe=False,
-                reason=f"Total cooling effort {total_cooling}% < minimum {min_effort}%",
-            )
-
-        # Check power-dependent minimums (if power is known)
-        if cpu_power is not None or gpu_power is not None:
-            for constraint in self.safety_config["power_dependent_minimums"]:
-                component = constraint["component"]
-                threshold = constraint["power_threshold"]
-
-                # Select which power to check based on the component
-                relevant_power = cpu_power if component == "cpu" else gpu_power
-
-                if relevant_power and relevant_power > threshold:
-                    for key, min_val in constraint.items():
-                        if key.endswith("_min") and key != "power_threshold":
-                            device_id = key.replace("_min", "")
-                            if (
-                                device_id in point.pwm_values
-                                and point.pwm_values[device_id] < min_val
-                            ):
-                                return SafetyCheck(
-                                    safe=False,
-                                    reason=f"{component.upper()} power {relevant_power:.1f}W > {threshold}W requires {device_id} >= {min_val}%",
-                                    cpu_power=cpu_power if component == "cpu" else None,
-                                    gpu_power=gpu_power if component == "gpu" else None,
-                                )
-
-        return SafetyCheck(safe=True)
-
-    def collect_measurement(self, point: TestPoint) -> Optional[MeasurementPoint]:
-        """
-        Execute a single test point and collect measurement.
+    def _collect_sample(
+        self,
+        episode_id: str,
+        sample_index: int,
+        pwm_values: dict[str, int],
+        load_config: dict,
+    ) -> TimeSeriesSample:
+        """Collect a single instantaneous sample.
 
         Args:
-            point: Test point to measure
+            episode_id: Episode identifier
+            sample_index: Index within episode
+            pwm_values: Current PWM values (0-255)
+            load_config: Load configuration dict
 
         Returns:
-            MeasurementPoint if successful, None if aborted
+            TimeSeriesSample with all measurements
         """
-        measurement_duration = self.data_config["measurement_duration"]
-        sample_interval = self.data_config["sample_interval"]
+        timestamp = time.time()
 
-        # Measure power
+        # Read temperatures
+        T_cpu = self.hardware.get_cpu_temp()
+        T_gpu = self.hardware.get_gpu_temp()
+
+        # Read power and per-core metrics
         cpu_power_data = self.hardware.get_cpu_power()
-        cpu_power = cpu_power_data['package'] if cpu_power_data else None
-        gpu_power = self.hardware.get_gpu_power()
+        P_cpu = cpu_power_data["package"] if cpu_power_data else 0.0
+        P_cpu_cores = None
+        cpu_avg_mhz = None
+        cpu_bzy_mhz = None
+        cpu_busy_pct = None
 
-        # Safety check with current power
-        safety_check = self.is_safe_test_point(
-            point, current_power=(cpu_power, gpu_power)
-        )
-        if not safety_check.safe:
-            tqdm.write(f"✗ Unsafe: {safety_check.reason}")
-            return None
+        if cpu_power_data and cpu_power_data.get("cores"):
+            cores_data = cpu_power_data["cores"]
+            P_cpu_cores = {k: v["power"] for k, v in cores_data.items()}
+            cpu_avg_mhz = {k: v["avg_mhz"] for k, v in cores_data.items()}
+            cpu_bzy_mhz = {k: v["bzy_mhz"] for k, v in cores_data.items()}
+            cpu_busy_pct = {k: v["busy_pct"] for k, v in cores_data.items()}
 
-        # Set fan speeds
-        for device_id, speed in point.pwm_values.items():
-            pwm_num = self.devices[device_id]["pwm_number"]
-            if not self.hardware.set_fan_speed(pwm_num, speed):
-                tqdm.write(f"✗ Failed to set {device_id} (PWM{pwm_num})")
-                return None
+        P_gpu = self.hardware.get_gpu_power() or 0.0
+        T_amb = self.hardware.get_ambient_temp()
+        gpu_fan_speed = self.hardware.get_gpu_fan_speed()
 
-        # Wait for equilibration
-        try:
-            actual_stabilization_time, eq_info = self.wait_for_equilibration()
-        except AbortPointError:
-            return None
-
-        # Measure over duration
-        measurements = {
-            "cpu_temps": [],
-            "gpu_temps": [],
-            "cpu_powers": [],
-            "cpu_core_metrics": [],  # List of dicts with per-core metrics, one per sample
-            "gpu_powers": [],
-            "gpu_fan_speeds": [],
-            "ambient_temps": [],
-        }
-
-        num_samples = int(measurement_duration / sample_interval)
-        for _ in range(num_samples):
-            measurements["cpu_temps"].append(self.hardware.get_cpu_temp())
-            measurements["gpu_temps"].append(self.hardware.get_gpu_temp())
-
-            # Get CPU power and performance metrics (package and per-core)
-            cpu_power_data = self.hardware.get_cpu_power()
-            if cpu_power_data:
-                measurements["cpu_powers"].append(cpu_power_data['package'])
-                measurements["cpu_core_metrics"].append(cpu_power_data['cores'])
-            else:
-                measurements["cpu_powers"].append(None)
-                measurements["cpu_core_metrics"].append(None)
-
-            measurements["gpu_powers"].append(self.hardware.get_gpu_power())
-            measurements["gpu_fan_speeds"].append(self.hardware.get_gpu_fan_speed())
-            measurements["ambient_temps"].append(self.hardware.get_ambient_temp())
-
-            time.sleep(sample_interval)
-
-        # Average measurements
-        cpu_temp_avg = float(
-            np.nanmean([t for t in measurements["cpu_temps"] if t is not None])
-        )
-        gpu_temp_avg = float(
-            np.nanmean([t for t in measurements["gpu_temps"] if t is not None])
-        )
-        cpu_power_avg = float(
-            np.nanmean([p for p in measurements["cpu_powers"] if p is not None])
-        )
-        gpu_power_avg = float(
-            np.nanmean([p for p in measurements["gpu_powers"] if p is not None])
-        )
-        ambient_temps = [t for t in measurements["ambient_temps"] if t is not None]
-        ambient_temp_avg = float(np.nanmean(ambient_temps)) if ambient_temps else None
-
-        # Average GPU fan speed
-        gpu_fan_speeds = [s for s in measurements["gpu_fan_speeds"] if s is not None]
-        gpu_fan_speed_avg = int(round(np.nanmean(gpu_fan_speeds))) if gpu_fan_speeds else None
-
-        # Average per-core metrics
-        cpu_core_power_avg = None
-        cpu_avg_mhz_avg = None
-        cpu_bzy_mhz_avg = None
-        cpu_busy_pct_avg = None
-
-        valid_core_samples = [cm for cm in measurements["cpu_core_metrics"] if cm is not None]
-        if valid_core_samples:
-            # Aggregate all core measurements across samples
-            core_power_sums = {}
-            core_avg_mhz_sums = {}
-            core_bzy_mhz_sums = {}
-            core_busy_pct_sums = {}
-            core_counts = {}
-
-            for sample in valid_core_samples:
-                for core_num, metrics in sample.items():
-                    if core_num not in core_counts:
-                        core_power_sums[core_num] = 0
-                        core_avg_mhz_sums[core_num] = 0
-                        core_bzy_mhz_sums[core_num] = 0
-                        core_busy_pct_sums[core_num] = 0
-                        core_counts[core_num] = 0
-
-                    core_power_sums[core_num] += metrics['power']
-                    core_avg_mhz_sums[core_num] += metrics['avg_mhz']
-                    core_bzy_mhz_sums[core_num] += metrics['bzy_mhz']
-                    core_busy_pct_sums[core_num] += metrics['busy_pct']
-                    core_counts[core_num] += 1
-
-            # Calculate averages
-            cpu_core_power_avg = {
-                core_num: core_power_sums[core_num] / core_counts[core_num]
-                for core_num in core_counts
-            }
-            cpu_avg_mhz_avg = {
-                core_num: core_avg_mhz_sums[core_num] / core_counts[core_num]
-                for core_num in core_counts
-            }
-            cpu_bzy_mhz_avg = {
-                core_num: core_bzy_mhz_sums[core_num] / core_counts[core_num]
-                for core_num in core_counts
-            }
-            cpu_busy_pct_avg = {
-                core_num: core_busy_pct_sums[core_num] / core_counts[core_num]
-                for core_num in core_counts
-            }
-
-        # Convert PWM percentage to 0-255 for storage
-        pwm_values_raw = {
-            k: int(round(v * 255 / 100)) for k, v in point.pwm_values.items()
-        }
-
-        # Create measurement point
-        measurement = MeasurementPoint(
-            timestamp=time.time(),
-            pwm_values=pwm_values_raw,
-            P_cpu=cpu_power_avg,
-            P_gpu=gpu_power_avg,
-            T_cpu=cpu_temp_avg,
-            T_gpu=gpu_temp_avg,
-            cpu_load_flags=point.cpu_load_flags,
-            gpu_load_flags=point.gpu_load_flags,
-            cpu_cores=point.cpu_cores,
-            stabilization_time=actual_stabilization_time,
-            P_cpu_cores=cpu_core_power_avg,
-            cpu_avg_mhz=cpu_avg_mhz_avg,
-            cpu_bzy_mhz=cpu_bzy_mhz_avg,
-            cpu_busy_pct=cpu_busy_pct_avg,
-            T_amb=ambient_temp_avg,
-            gpu_fan_speed=gpu_fan_speed_avg,
-            equilibrated=eq_info["equilibrated"],
-            equilibration_reason=eq_info.get("reason"),
-            description=point.description,
+        return TimeSeriesSample(
+            timestamp=timestamp,
+            episode_id=episode_id,
+            sample_index=sample_index,
+            T_cpu=T_cpu or 0.0,
+            T_gpu=T_gpu or 0.0,
+            pwm2=pwm_values.get("pwm2", 0),
+            pwm4=pwm_values.get("pwm4", 0),
+            pwm5=pwm_values.get("pwm5", 0),
+            P_cpu=P_cpu,
+            P_gpu=P_gpu,
+            T_amb=T_amb,
+            P_cpu_cores=P_cpu_cores,
+            cpu_avg_mhz=cpu_avg_mhz,
+            cpu_bzy_mhz=cpu_bzy_mhz,
+            cpu_busy_pct=cpu_busy_pct,
+            gpu_fan_speed=gpu_fan_speed,
+            load_description=load_config["description"],
+            cpu_load_flags=load_config["cpu_load"],
+            gpu_load_flags=load_config["gpu_load"],
         )
 
-        return measurement
+    def run_episode(
+        self, load_config: dict, episode_id: str, seed: int
+    ) -> tuple[Episode, list[TimeSeriesSample]]:
+        """Run single episode: continuous 1Hz sampling with PWM steps.
 
-    def wait_for_equilibration(self) -> Tuple[float, dict]:
-        """
-        Wait for temperature equilibration using dynamic detection.
+        No equilibration - captures transient dynamics.
+
+        Args:
+            load_config: Load configuration dict
+            episode_id: Unique episode identifier
+            seed: Random seed for PWM schedule generation
 
         Returns:
-            (actual_wait_time, equilibration_info)
+            Tuple of (Episode metadata, list of samples)
         """
+        schedule = self.schedule_generator.generate(self.episode_duration, seed)
+        samples: list[TimeSeriesSample] = []
         start_time = time.time()
+        current_step_idx = 0
+        sample_index = 0
+        aborted = False
+        abort_reason: Optional[str] = None
 
-        # Initialize temperature window
-        window = TemperatureWindow(
-            window_duration=self.eq_window, check_interval=self.eq_check_interval
-        )
+        # Apply initial PWM
+        self._apply_pwm(schedule[0].pwm_values)
 
-        eq_info = {
-            "equilibrated": False,
-            "reason": None,
-            "final_cpu_range": None,
-            "final_gpu_range": None,
-        }
-
+        # Progress bar for episode
+        expected_samples = int(self.episode_duration / self.sample_interval)
         with tqdm(
-            total=self.eq_max_wait,
-            desc="Equilibrating",
-            unit="s",
+            total=expected_samples,
+            desc=f"Episode {episode_id[:20]}",
+            unit="sample",
             leave=False,
-            bar_format="{desc}: {percentage:3.0f}% |{bar}| {n_fmt}/{total_fmt}s [{elapsed}<{remaining}{postfix}]",
+            bar_format="{desc}: {percentage:3.0f}% |{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
         ) as pbar:
-            pbar.set_postfix_str("Initializing...")
-            while True:
-                elapsed = time.time() - start_time
-                time.sleep(self.eq_check_interval)
+            while (elapsed := time.time() - start_time) < self.episode_duration:
+                loop_start = time.time()
+
+                # Check for scheduled PWM step
+                if (
+                    current_step_idx + 1 < len(schedule)
+                    and elapsed >= schedule[current_step_idx + 1].time_offset
+                ):
+                    current_step_idx += 1
+                    self._apply_pwm(schedule[current_step_idx].pwm_values)
+                    pwm_str = ", ".join(
+                        f"{k}={v}"
+                        for k, v in schedule[current_step_idx].pwm_values.items()
+                    )
+                    tqdm.write(f"  PWM step at {elapsed:.1f}s: {pwm_str}")
 
                 # Safety check
                 try:
                     self.safety.check_safety()
                 except AbortPointError as e:
-                    tqdm.write(f"\n✗ ABORT: {e}")
+                    tqdm.write(f"\nABORT: {e}")
                     tqdm.write(
-                        f"  Setting fans to full speed and cooling down for {self.safety.abort_cooldown_time}s..."
+                        f"  Setting fans to full speed and cooling for {self.safety.abort_cooldown_time}s..."
                     )
                     self.safety._apply_abort_speeds()
-                    # Wait for cooldown at full speed
                     time.sleep(self.safety.abort_cooldown_time)
-                    raise
-
-                # Read temperatures
-                cpu_temp = self.hardware.get_cpu_temp()
-                gpu_temp = self.hardware.get_gpu_temp()
-                window.add_reading(cpu_temp, gpu_temp, time.time())
-
-                # Update progress bar
-                cpu_str = f"{cpu_temp:.1f}°C" if cpu_temp else "N/A"
-                gpu_str = f"{gpu_temp:.1f}°C" if gpu_temp else "N/A"
-                _, details = window.check_equilibration(self.eq_threshold_cpu, self.eq_threshold_gpu)
-
-                status = (
-                    "Stable"
-                    if details.get("cpu_stable") and details.get("gpu_stable")
-                    else "Unstable"
-                )
-                pbar.set_postfix_str(f"CPU: {cpu_str}, GPU: {gpu_str} ({status})")
-                pbar.n = min(int(elapsed), self.eq_max_wait)
-                pbar.refresh()
-
-                # Check timeout
-                if elapsed >= self.eq_max_wait:
-                    eq_info["equilibrated"] = False
-                    eq_info["reason"] = f"timeout_after_{self.eq_max_wait}s"
-                    eq_info["final_cpu_range"] = details["cpu_range"]
-                    eq_info["final_gpu_range"] = details["gpu_range"]
+                    aborted = True
+                    abort_reason = str(e)
                     break
 
-                # Check equilibration (only after minimum wait)
-                if elapsed >= self.eq_min_wait:
-                    is_equilibrated, details = window.check_equilibration(
-                        self.eq_threshold_cpu, self.eq_threshold_gpu
-                    )
+                # Sample immediately (no waiting!)
+                sample = self._collect_sample(
+                    episode_id,
+                    sample_index,
+                    schedule[current_step_idx].pwm_values,
+                    load_config,
+                )
+                samples.append(sample)
+                sample_index += 1
+                pbar.update(1)
 
-                    if is_equilibrated:
-                        eq_info["equilibrated"] = True
-                        eq_info["reason"] = "equilibrated"
-                        eq_info["final_cpu_range"] = details["cpu_range"]
-                        eq_info["final_gpu_range"] = details["gpu_range"]
-                        break
+                # Update status
+                pbar.set_postfix_str(
+                    f"CPU:{sample.T_cpu:.1f}C GPU:{sample.T_gpu:.1f}C"
+                )
 
-        return time.time() - start_time, eq_info
+                # Maintain sample rate
+                sleep_time = max(0, self.sample_interval - (time.time() - loop_start))
+                time.sleep(sleep_time)
+
+        end_time = time.time()
+
+        episode = Episode(
+            episode_id=episode_id,
+            start_timestamp=start_time,
+            end_timestamp=end_time,
+            load_description=load_config["description"],
+            num_samples=len(samples),
+            aborted=aborted,
+            abort_reason=abort_reason,
+        )
+
+        return episode, samples
 
     def run_collection(self, output_path: Path) -> None:
-        """
-        Run full data collection campaign.
+        """Run full campaign: episodes_per_load episodes for each load level.
 
         Args:
             output_path: Path to output CSV file
         """
         load_levels = self.data_config["load_levels"]
-        num_samples_per_load = self.data_config["num_samples_per_load"]
-        total_target = num_samples_per_load * len(load_levels)
+        total_episodes = self.episodes_per_load * len(load_levels)
 
         print("\n" + "=" * 80)
-        print("STARTING DATA COLLECTION")
+        print("STARTING TIME-SERIES DATA COLLECTION")
         print("=" * 80)
-        print(f"Target: {num_samples_per_load} measurements per load level")
+        print(f"Episode duration: {self.episode_duration}s")
+        print(f"Episodes per load: {self.episodes_per_load}")
         print(f"Load levels: {len(load_levels)}")
-        print(f"Total target measurements: {total_target}")
-
-        total_successful = 0
-        total_skipped = 0
+        print(f"Total episodes: {total_episodes}")
+        print(f"Sample interval: {self.sample_interval}s")
+        print(f"Expected samples per episode: ~{int(self.episode_duration / self.sample_interval)}")
 
         with tqdm(
-            total=total_target,
+            total=total_episodes,
             desc="Total Progress",
-            unit="pt",
-            bar_format="{desc}: {percentage:3.0f}% |{bar}| {n_fmt}/{total_fmt} points [{elapsed}<{remaining}]",
+            unit="ep",
+            bar_format="{desc}: {percentage:3.0f}% |{bar}| {n_fmt}/{total_fmt} episodes [{elapsed}<{remaining}]",
         ) as main_pbar:
             # Process each load level
             for load_idx, load in enumerate(load_levels, 1):
-                cpu_load = load["cpu_load"]
-                gpu_load = load["gpu_load"]
                 description = load["description"]
 
                 tqdm.write(f"\n{'=' * 80}")
-                tqdm.write(f"Load Level {load_idx}/{len(load_levels)}: {description}")
-                tqdm.write(f"  CPU: '{cpu_load}' | GPU: '{gpu_load}'")
+                tqdm.write(
+                    f"Load Level {load_idx}/{len(load_levels)}: {description}"
+                )
+                tqdm.write(f"  CPU: '{load['cpu_load']}' | GPU: '{load['gpu_load']}'")
                 tqdm.write(f"{'=' * 80}")
 
-                # Set load for the entire group
-                if not self.load_orchestrator.set_workload(cpu_load, gpu_load):
-                    tqdm.write("✗ Failed to set load for this level")
-                    tqdm.write(
-                        f"  Skipping all {num_samples_per_load} planned measurements"
-                    )
-                    total_skipped += num_samples_per_load
-                    main_pbar.update(num_samples_per_load)
+                # Set load for the entire group (LoadOrchestrator handles stabilization wait)
+                if not self.load_orchestrator.set_workload(
+                    load["cpu_load"], load["gpu_load"]
+                ):
+                    tqdm.write(f"Failed to set load for: {description}")
+                    main_pbar.update(self.episodes_per_load)
                     continue
 
-                # Create generator for this load level
-                point_generator = self.generate_test_points_for_load(
-                    cpu_load, gpu_load, description
-                )
+                # Run episodes for this load
+                for ep_num in range(self.episodes_per_load):
+                    episode_id = f"{description}_{ep_num}_{int(time.time())}"
+                    seed = self.sampling_seed + self._episode_counter
+                    self._episode_counter += 1
 
-                # Collect measurements until we reach target
-                successful_for_load = 0
-                attempted_for_load = 0
-                skipped_for_load = 0
+                    tqdm.write(
+                        f"\n  Starting episode {ep_num + 1}/{self.episodes_per_load}: {episode_id}"
+                    )
 
-                for point in point_generator:
-                    # Stop when we have enough successful measurements
-                    if successful_for_load >= num_samples_per_load:
-                        break
+                    episode, samples = self.run_episode(load, episode_id, seed)
+                    self.episodes.append(episode)
+                    self.samples.extend(samples)
 
-                    attempted_for_load += 1
+                    # Incremental save
+                    self.save_samples(output_path)
 
-                    # Check if point is safe (pre-check without power)
-                    safety_check = self.is_safe_test_point(point)
-                    if not safety_check.safe:
-                        skipped_for_load += 1
+                    main_pbar.update(1)
+
+                    if episode.aborted:
                         tqdm.write(
-                            f"\n[Load {load_idx}: {successful_for_load}/{num_samples_per_load}] "
-                            f"Skipping unsafe point (attempt {attempted_for_load}): {safety_check.reason}"
+                            f"  Episode aborted: {episode.abort_reason}"
                         )
-                        continue
-
-                    # Collect measurement
-                    measurement = self.collect_measurement(point)
-
-                    if measurement:
-                        self.measurements.append(measurement)
-                        successful_for_load += 1
-                        total_successful += 1
-                        main_pbar.update(1)
-
-                        # Save incrementally
-                        self.save_measurements(output_path)
-                    else:
-                        skipped_for_load += 1
-
-                total_skipped += skipped_for_load
-
-        # Final save
-        self.save_measurements(output_path)
 
         # Final summary
         print("\n" + "=" * 80)
         print("DATA COLLECTION COMPLETE")
         print("=" * 80)
-        print(f"Target measurements: {num_samples_per_load * len(load_levels)}")
-        print(f"Successful measurements: {total_successful}")
-        print(f"Skipped/Aborted: {total_skipped}")
-        print(f"Total points collected: {len(self.measurements)}")
+        print(f"Total episodes: {len(self.episodes)}")
+        print(f"Completed episodes: {sum(1 for e in self.episodes if not e.aborted)}")
+        print(f"Aborted episodes: {sum(1 for e in self.episodes if e.aborted)}")
+        print(f"Total samples: {len(self.samples)}")
         print(f"Data saved to: {output_path}")
         print("=" * 80 + "\n")
 
-    def save_measurements(self, output_path: Path) -> None:
-        """
-        Save measurements to CSV file.
+    def save_samples(self, output_path: Path) -> None:
+        """Save samples to CSV file.
 
         Args:
             output_path: Path to output CSV file
         """
-        device_keys = list(self.devices.keys())
-
-        # Determine number of cores from measurements
+        # Determine number of cores from samples
         num_cores = 12  # default
-        for measurement in self.measurements:
-            # Check any of the per-core fields to determine core count
-            if measurement.P_cpu_cores:
-                num_cores = max(measurement.P_cpu_cores.keys()) + 1
-                break
-            elif measurement.cpu_avg_mhz:
-                num_cores = max(measurement.cpu_avg_mhz.keys()) + 1
+        for sample in self.samples:
+            if sample.P_cpu_cores:
+                num_cores = max(sample.P_cpu_cores.keys()) + 1
                 break
 
         # Save CSV (drop privileges to ensure proper ownership)
@@ -765,9 +424,9 @@ class DataCollector:
 
             with open(output_path, "w", newline="") as f:
                 writer = csv.DictWriter(
-                    f, fieldnames=MeasurementPoint.csv_header(device_keys, num_cores)
+                    f, fieldnames=TimeSeriesSample.csv_header(num_cores)
                 )
                 writer.writeheader()
 
-                for measurement in self.measurements:
-                    writer.writerow(measurement.to_dict())
+                for sample in self.samples:
+                    writer.writerow(sample.to_dict())
