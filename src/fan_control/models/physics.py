@@ -31,14 +31,18 @@ class PhysicsModel(DynamicThermalModel):
     """
     Thermal RC network model with learnable parameters.
 
-    The model uses a first-order thermal dynamics equation:
-    dT/dt = (1/C) * [P - (T - T_amb) * (R_base + R_fan * f(PWM))]
+    The model uses a first-order thermal dynamics equation with temperature-dependent cooling:
+    dT/dt = (1/C) * [P - (T - T_amb) * G_eff(T, PWM)]
 
     Discretized (Euler):
     T_{k+1} = T_k + dt * (P/C - (T_k - T_amb) * G_eff)
 
-    Where G_eff (effective thermal conductance) depends on fan speed:
-    G_eff = G_base + sum(G_fan_i * PWM_i / 100)
+    Where G_eff (effective thermal conductance) depends on temperature and fan speed:
+    - CPU: G_eff = G_base + sum(G_fan_i * PWM_i / 255)
+    - GPU: G_eff = G_base + G_T * (T - T_ref) + sum(G_fan_i * PWM_i / 255)
+
+    The GPU model includes temperature-dependent convection to capture natural
+    convection effects and improved heat transfer at higher temperatures.
     """
 
     def __init__(self, config: Dict[str, Any]):
@@ -52,6 +56,8 @@ class PhysicsModel(DynamicThermalModel):
         # CPU thermal parameters
         self.C_cpu = physics_config["C_cpu"]
         self.G_cpu_base = physics_config["G_cpu_base"]
+        self.G_cpu_T = physics_config["G_cpu_T"]  # Temperature-dependent term
+        self.T_ref_cpu = physics_config["T_ref_cpu"]  # Reference temperature
         self.G_cpu_pwm2 = physics_config["G_cpu_pwm2"]
         self.G_cpu_pwm4 = physics_config["G_cpu_pwm4"]
         self.G_cpu_pwm5 = physics_config["G_cpu_pwm5"]
@@ -59,75 +65,98 @@ class PhysicsModel(DynamicThermalModel):
         # GPU thermal parameters
         self.C_gpu = physics_config["C_gpu"]
         self.G_gpu_base = physics_config["G_gpu_base"]
+        self.G_gpu_T = physics_config["G_gpu_T"]  # Temperature-dependent term
+        self.T_ref_gpu = physics_config["T_ref_gpu"]  # Reference temperature
         self.G_gpu_pwm2 = physics_config["G_gpu_pwm2"]
         self.G_gpu_pwm4 = physics_config["G_gpu_pwm4"]
         self.G_gpu_pwm5 = physics_config["G_gpu_pwm5"]
 
         # Parameter bounds for optimization
+        # v8 hybrid: CPU simple (no temp-dep), GPU temp-dep
         self.param_bounds = {
-            "C": (10.0, 500.0),
-            "G_base": (0.1, 10.0),
-            "G_fan": (0.001, 0.5),
+            "C_cpu": (80.0, 120.0),  # CPU thermal capacity (J/K) - tight around 100
+            "C_gpu": (50.0, 80.0),  # GPU thermal capacity (J/K) - tight around 65
+            "G_cpu_base": (1.7, 2.0),  # CPU base conductance - tight around 1.86
+            "G_cpu_T": (0.0, 0.0),  # CPU: NO temperature dependence (FIXED at 0)
+            "G_gpu_base": (0.7, 1.0),  # GPU base conductance - tight around 0.8
+            "G_gpu_T": (0.15, 0.22),  # GPU temp-dependent - tight around 0.196
+            "G_fan": (0.05, 0.15),  # PWM effects - tight around 0.1
         }
 
     def _pack_params(self) -> np.ndarray:
         """Pack all parameters into a vector for optimization."""
         return np.array([
-            self.C_cpu, self.G_cpu_base, self.G_cpu_pwm2, self.G_cpu_pwm4, self.G_cpu_pwm5,
-            self.C_gpu, self.G_gpu_base, self.G_gpu_pwm2, self.G_gpu_pwm4, self.G_gpu_pwm5,
+            self.C_cpu, self.G_cpu_base, self.G_cpu_T, self.G_cpu_pwm2, self.G_cpu_pwm4, self.G_cpu_pwm5,
+            self.C_gpu, self.G_gpu_base, self.G_gpu_T, self.G_gpu_pwm2, self.G_gpu_pwm4, self.G_gpu_pwm5,
         ])
 
     def _unpack_params(self, params: np.ndarray) -> None:
         """Unpack parameter vector into model attributes."""
         self.C_cpu = params[0]
         self.G_cpu_base = params[1]
-        self.G_cpu_pwm2 = params[2]
-        self.G_cpu_pwm4 = params[3]
-        self.G_cpu_pwm5 = params[4]
-        self.C_gpu = params[5]
-        self.G_gpu_base = params[6]
-        self.G_gpu_pwm2 = params[7]
-        self.G_gpu_pwm4 = params[8]
-        self.G_gpu_pwm5 = params[9]
+        self.G_cpu_T = params[2]
+        self.G_cpu_pwm2 = params[3]
+        self.G_cpu_pwm4 = params[4]
+        self.G_cpu_pwm5 = params[5]
+        self.C_gpu = params[6]
+        self.G_gpu_base = params[7]
+        self.G_gpu_T = params[8]
+        self.G_gpu_pwm2 = params[9]
+        self.G_gpu_pwm4 = params[10]
+        self.G_gpu_pwm5 = params[11]
 
     def _get_bounds(self) -> list:
         """Get optimization bounds for all parameters."""
         return [
-            self.param_bounds["C"],  # C_cpu
-            self.param_bounds["G_base"],  # G_cpu_base
+            self.param_bounds["C_cpu"],  # C_cpu
+            self.param_bounds["G_cpu_base"],  # G_cpu_base
+            self.param_bounds["G_cpu_T"],  # G_cpu_T (temperature-dependent)
             self.param_bounds["G_fan"],  # G_cpu_pwm2
             self.param_bounds["G_fan"],  # G_cpu_pwm4
             self.param_bounds["G_fan"],  # G_cpu_pwm5
-            self.param_bounds["C"],  # C_gpu
-            self.param_bounds["G_base"],  # G_gpu_base
+            self.param_bounds["C_gpu"],  # C_gpu
+            self.param_bounds["G_gpu_base"],  # G_gpu_base
+            self.param_bounds["G_gpu_T"],  # G_gpu_T (temperature-dependent)
             self.param_bounds["G_fan"],  # G_gpu_pwm2
             self.param_bounds["G_fan"],  # G_gpu_pwm4
             self.param_bounds["G_fan"],  # G_gpu_pwm5
         ]
 
     def _compute_G_eff(
-        self, pwm2: float, pwm4: float, pwm5: float, is_cpu: bool = True
+        self, pwm2: float, pwm4: float, pwm5: float, T: Optional[float] = None, is_cpu: bool = True
     ) -> float:
         """
-        Compute effective thermal conductance based on fan speeds.
+        Compute effective thermal conductance based on fan speeds and temperature.
 
         Args:
-            pwm2, pwm4, pwm5: Fan speeds (0-100)
+            pwm2, pwm4, pwm5: Fan speeds (0-100 percentage values)
+            T: Current temperature (for temperature-dependent term)
             is_cpu: Whether to use CPU or GPU parameters
 
         Returns:
             Effective thermal conductance (W/°C)
         """
         if is_cpu:
+            G_base = self.G_cpu_base
+            if T is not None:
+                # Add temperature-dependent term (though CPU is mostly constant)
+                G_base += self.G_cpu_T * (T - self.T_ref_cpu)
+
             return (
-                self.G_cpu_base
+                G_base
                 + self.G_cpu_pwm2 * pwm2 / 100
                 + self.G_cpu_pwm4 * pwm4 / 100
                 + self.G_cpu_pwm5 * pwm5 / 100
             )
         else:
+            # GPU has temperature-dependent convection
+            G_base = self.G_gpu_base
+            if T is not None:
+                # Add temperature-dependent term: improved heat transfer at higher temps
+                G_base += self.G_gpu_T * (T - self.T_ref_gpu)
+
             return (
-                self.G_gpu_base
+                G_base
                 + self.G_gpu_pwm2 * pwm2 / 100
                 + self.G_gpu_pwm4 * pwm4 / 100
                 + self.G_gpu_pwm5 * pwm5 / 100
@@ -184,13 +213,13 @@ class PhysicsModel(DynamicThermalModel):
             n = len(T_cpu)
 
             for i in range(n):
-                # CPU prediction
-                G_cpu = self._compute_G_eff(pwm2[i], pwm4[i], pwm5[i], is_cpu=True)
+                # CPU prediction (temperature-dependent)
+                G_cpu = self._compute_G_eff(pwm2[i], pwm4[i], pwm5[i], T=T_cpu[i], is_cpu=True)
                 T_cpu_pred = self._step(T_cpu[i], P_cpu[i], G_cpu, self.C_cpu, T_amb[i])
                 total_loss += (T_cpu_pred - T_cpu_next[i]) ** 2
 
-                # GPU prediction
-                G_gpu = self._compute_G_eff(pwm2[i], pwm4[i], pwm5[i], is_cpu=False)
+                # GPU prediction (temperature-dependent)
+                G_gpu = self._compute_G_eff(pwm2[i], pwm4[i], pwm5[i], T=T_gpu[i], is_cpu=False)
                 T_gpu_pred = self._step(T_gpu[i], P_gpu[i], G_gpu, self.C_gpu, T_amb[i])
                 total_loss += (T_gpu_pred - T_gpu_next[i]) ** 2
 
@@ -205,7 +234,7 @@ class PhysicsModel(DynamicThermalModel):
             initial_params,
             method="L-BFGS-B",
             bounds=self._get_bounds(),
-            options={"maxiter": 500, "disp": False},
+            options={"maxiter": 1000, "disp": False, "ftol": 1e-9},
         )
 
         self._unpack_params(result.x)
@@ -215,11 +244,11 @@ class PhysicsModel(DynamicThermalModel):
         gpu_errors = []
 
         for i in range(len(T_cpu)):
-            G_cpu = self._compute_G_eff(pwm2[i], pwm4[i], pwm5[i], is_cpu=True)
+            G_cpu = self._compute_G_eff(pwm2[i], pwm4[i], pwm5[i], T=T_cpu[i], is_cpu=True)
             T_cpu_pred = self._step(T_cpu[i], P_cpu[i], G_cpu, self.C_cpu, T_amb[i])
             cpu_errors.append(T_cpu_pred - T_cpu_next[i])
 
-            G_gpu = self._compute_G_eff(pwm2[i], pwm4[i], pwm5[i], is_cpu=False)
+            G_gpu = self._compute_G_eff(pwm2[i], pwm4[i], pwm5[i], T=T_gpu[i], is_cpu=False)
             T_gpu_pred = self._step(T_gpu[i], P_gpu[i], G_gpu, self.C_gpu, T_amb[i])
             gpu_errors.append(T_gpu_pred - T_gpu_next[i])
 
@@ -236,8 +265,10 @@ class PhysicsModel(DynamicThermalModel):
 
         logger.info(f"Physics model fitted: CPU RMSE={metrics['cpu_rmse']:.2f}°C, "
                     f"GPU RMSE={metrics['gpu_rmse']:.2f}°C")
-        logger.info(f"Fitted parameters: C_cpu={self.C_cpu:.1f}, G_cpu_base={self.G_cpu_base:.3f}")
-        logger.info(f"                   C_gpu={self.C_gpu:.1f}, G_gpu_base={self.G_gpu_base:.3f}")
+        logger.info(f"Fitted parameters: C_cpu={self.C_cpu:.1f}, G_cpu_base={self.G_cpu_base:.3f}, "
+                    f"G_cpu_T={self.G_cpu_T:.4f}")
+        logger.info(f"                   C_gpu={self.C_gpu:.1f}, G_gpu_base={self.G_gpu_base:.3f}, "
+                    f"G_gpu_T={self.G_gpu_T:.4f}")
 
         return metrics
 
@@ -249,9 +280,9 @@ class PhysicsModel(DynamicThermalModel):
         T_amb: float,
     ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
         """Predict next temperatures using RC model."""
-        # Compute effective conductances
-        G_cpu = self._compute_G_eff(PWM[0], PWM[1], PWM[2], is_cpu=True)
-        G_gpu = self._compute_G_eff(PWM[0], PWM[1], PWM[2], is_cpu=False)
+        # Compute effective conductances (temperature-dependent)
+        G_cpu = self._compute_G_eff(PWM[0], PWM[1], PWM[2], T=T_k[0], is_cpu=True)
+        G_gpu = self._compute_G_eff(PWM[0], PWM[1], PWM[2], T=T_k[1], is_cpu=False)
 
         # Step forward
         T_cpu_next = self._step(T_k[0], P[0], G_cpu, self.C_cpu, T_amb)
@@ -298,6 +329,8 @@ class PhysicsModel(DynamicThermalModel):
             "cpu": {
                 "C": self.C_cpu,
                 "G_base": self.G_cpu_base,
+                "G_T": self.G_cpu_T,
+                "T_ref": self.T_ref_cpu,
                 "G_pwm2": self.G_cpu_pwm2,
                 "G_pwm4": self.G_cpu_pwm4,
                 "G_pwm5": self.G_cpu_pwm5,
@@ -305,6 +338,8 @@ class PhysicsModel(DynamicThermalModel):
             "gpu": {
                 "C": self.C_gpu,
                 "G_base": self.G_gpu_base,
+                "G_T": self.G_gpu_T,
+                "T_ref": self.T_ref_gpu,
                 "G_pwm2": self.G_gpu_pwm2,
                 "G_pwm4": self.G_gpu_pwm4,
                 "G_pwm5": self.G_gpu_pwm5,
@@ -331,12 +366,16 @@ class PhysicsModel(DynamicThermalModel):
         model.dt = params["dt"]
         model.C_cpu = params["cpu"]["C"]
         model.G_cpu_base = params["cpu"]["G_base"]
+        model.G_cpu_T = params["cpu"]["G_T"]
+        model.T_ref_cpu = params["cpu"]["T_ref"]
         model.G_cpu_pwm2 = params["cpu"]["G_pwm2"]
         model.G_cpu_pwm4 = params["cpu"]["G_pwm4"]
         model.G_cpu_pwm5 = params["cpu"]["G_pwm5"]
 
         model.C_gpu = params["gpu"]["C"]
         model.G_gpu_base = params["gpu"]["G_base"]
+        model.G_gpu_T = params["gpu"]["G_T"]
+        model.T_ref_gpu = params["gpu"]["T_ref"]
         model.G_gpu_pwm2 = params["gpu"]["G_pwm2"]
         model.G_gpu_pwm4 = params["gpu"]["G_pwm4"]
         model.G_gpu_pwm5 = params["gpu"]["G_pwm5"]

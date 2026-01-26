@@ -396,20 +396,28 @@ if __name__ == "__main__":
             f"(T_cpu >= {max_cpu_temp} or T_gpu >= {max_gpu_temp})"
         )
 
-    # 4. Normalize PWM to 0-100 range (from 0-255)
+    # 4. Drop rows with missing values in key model input columns
+    key_cols = ["T_cpu", "T_gpu", "pwm2", "pwm4", "pwm5", "P_cpu", "P_gpu", "T_amb"]
+    before_drop = len(df)
+    df = df.dropna(subset=key_cols)
+    dropped = before_drop - len(df)
+    if dropped > 0:
+        logger.info(f"Dropped {dropped} rows with missing values in key columns")
+
+    # 5. Normalize PWM to 0-100 range (from 0-255)
     for col in df.columns:
         if col.startswith("pwm"):
             df[col] = df[col] / 2.55
 
-    # 5. Generate EDA plots from filtered data
+    # 6. Generate EDA plots from filtered data
     plots_dir = Path("data/processed/plots")
     generate_eda_plots(df.copy(), plots_dir)
 
-    # 5b. Generate time-series specific plots if episode data exists
+    # 6b. Generate time-series specific plots if episode data exists
     if "episode_id" in df.columns:
         generate_timeseries_plots(df.copy(), plots_dir)
 
-    # 6. Split into train/val
+    # 7. Split into train/val
     # For time-series data: split by episode to preserve temporal continuity
     # For equilibrium data: random split
     if "episode_id" in df.columns:
@@ -428,7 +436,7 @@ if __name__ == "__main__":
         from sklearn.model_selection import train_test_split
         train_df, val_df = train_test_split(df, test_size=test_size, random_state=42)
 
-    # 7. Save processed CSVs
+    # 8. Save processed CSVs
     train_path = output_dir / "train.csv"
     val_path = output_dir / "val.csv"
 

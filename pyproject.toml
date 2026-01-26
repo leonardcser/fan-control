@@ -26,6 +26,7 @@ dev = [
     "seaborn>=0.13.2",
     "joblib>=1.4.0",
     "gpytorch>=1.15.1",
+    "tqdm>=4.66.0",
 ]
 
 [project.scripts]

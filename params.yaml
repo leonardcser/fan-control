@@ -13,7 +13,7 @@ preprocess:
 
 # Model Configuration
 model:
-  type: gbr     # physics | pinn | gbr | gp
+  type: physics # physics | pinn | gbr | gp
 
   # Feature configuration (shared across models)
   features:
@@ -32,18 +32,24 @@ model:
     - T_cpu
     - T_gpu
   physics:
-    dt: 1.0  # Time step (seconds)
-    # Initial parameter guesses (will be optimized during training)
-    C_cpu: 100.0      # CPU thermal capacitance (J/°C)
-    C_gpu: 80.0       # GPU thermal capacitance (J/°C)
-    G_cpu_base: 1.0   # CPU base thermal conductance (W/°C)
-    G_gpu_base: 0.8   # GPU base thermal conductance (W/°C)
-    G_cpu_pwm2: 0.05  # CPU cooling from pwm2
-    G_cpu_pwm4: 0.02  # CPU cooling from pwm4
-    G_cpu_pwm5: 0.02  # CPU cooling from pwm5
-    G_gpu_pwm2: 0.01  # GPU cooling from pwm2
-    G_gpu_pwm4: 0.03  # GPU cooling from pwm4
-    G_gpu_pwm5: 0.04  # GPU cooling from pwm5
+    dt: 1.0 # Time step (seconds)
+    # Hybrid v8: Use fitted values from best models (v4 CPU simple + v6 GPU temp-dep)
+    # Fitted values: C_cpu=100, G_cpu_base=1.858, C_gpu=65, G_gpu_base=0.8, G_gpu_T=0.196
+    C_cpu: 100.0 # CPU thermal capacitance (J/K)
+    C_gpu: 65.0 # GPU thermal capacitance (J/K)
+    G_cpu_base: 1.86 # CPU base thermal conductance (W/K) - from fitted
+    G_cpu_T: 0.0 # CPU: NO temperature dependence (fixed at 0)
+    T_ref_cpu: 60.0 # CPU reference temperature (°C)
+    G_gpu_base: 0.8 # GPU base thermal conductance at T_ref (W/K) - from fitted
+    G_gpu_T: 0.196 # GPU temperature-dependent term (W/K²) - from fitted
+    T_ref_gpu: 30.0 # GPU reference temperature (°C)
+    # PWM effects from fitted values
+    G_cpu_pwm2: 0.1 # CPU cooling from pwm2
+    G_cpu_pwm4: 0.1 # CPU cooling from pwm4
+    G_cpu_pwm5: 0.1 # CPU cooling from pwm5
+    G_gpu_pwm2: 0.0 # GPU cooling from pwm2
+    G_gpu_pwm4: 0.1 # GPU cooling from pwm4
+    G_gpu_pwm5: 0.1 # GPU cooling from pwm5
 
   # PINN model parameters (Physics-Informed Neural Network)
   pinn:
@@ -68,13 +74,12 @@ model:
   gp:
     training_iter: 200
     learning_rate: 0.05
-    max_train_samples: 3000  # GP is O(n^3), subsample if needed
+    max_train_samples: 3000 # GP is O(n^3), subsample if needed
 
 # Evaluation Configuration
 evaluate:
-  horizons:               # Multi-step rollout horizons to test
-
-# Optimizer Configuration
+  horizons: # Multi-step rollout horizons to test
+    # Optimizer Configuration
   - 10
   - 20
   - 50

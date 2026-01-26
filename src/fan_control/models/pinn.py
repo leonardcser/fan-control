@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 import torch
 import torch.nn as nn
@@ -183,7 +184,8 @@ class PINNModel(DynamicThermalModel):
         self.network.train()
 
         best_loss = float("inf")
-        for epoch in range(self.epochs):
+        pbar = tqdm(range(self.epochs), desc="Training PINN", unit="epoch")
+        for epoch in pbar:
             epoch_data_loss = 0.0
             epoch_physics_loss = 0.0
 
@@ -220,6 +222,8 @@ class PINNModel(DynamicThermalModel):
             avg_data_loss = epoch_data_loss / len(loader)
             avg_physics_loss = epoch_physics_loss / len(loader)
 
+            pbar.set_postfix(data_loss=f"{avg_data_loss:.4f}", phys_loss=f"{avg_physics_loss:.4f}")
+
             if avg_data_loss < best_loss:
                 best_loss = avg_data_loss
 
@@ -238,6 +242,14 @@ class PINNModel(DynamicThermalModel):
 
         cpu_rmse = float(np.sqrt(np.mean((Y_pred_unnorm[:, 0] - Y[:, 0]) ** 2)))
         gpu_rmse = float(np.sqrt(np.mean((Y_pred_unnorm[:, 1] - Y[:, 1]) ** 2)))
+
+        # Check for NaN in metrics
+        if not np.isfinite(cpu_rmse):
+            logger.warning("CPU RMSE is NaN/inf, setting to 999.0")
+            cpu_rmse = 999.0
+        if not np.isfinite(gpu_rmse):
+            logger.warning("GPU RMSE is NaN/inf, setting to 999.0")
+            gpu_rmse = 999.0
 
         metrics = {
             "cpu_rmse": cpu_rmse,
@@ -275,6 +287,15 @@ class PINNModel(DynamicThermalModel):
             Y_pred_np = Y_pred.cpu().numpy()
 
         T_next = self._denormalize_output(Y_pred_np)[0]
+
+        # Check for NaN/inf - if so, return current temperature
+        if not np.isfinite(T_next[0]):
+            logger.warning("NaN/inf in CPU PINN prediction, returning current temp")
+            T_next[0] = T_k[0]
+        if not np.isfinite(T_next[1]):
+            logger.warning("NaN/inf in GPU PINN prediction, returning current temp")
+            T_next[1] = T_k[1]
+
         return T_next, None
 
     def predict_horizon(
