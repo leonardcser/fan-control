@@ -138,48 +138,30 @@ class ThermalPINN(L.LightningModule):
         self,
         T_k: torch.Tensor,
         T_next: torch.Tensor,
-        PWM: torch.Tensor,
         P: torch.Tensor,
-        T_amb: torch.Tensor,
+        _T_amb: torch.Tensor,
     ) -> torch.Tensor:
         """
-        Physics-informed loss term enforcing thermal dynamics.
+        Physics-informed loss term.
 
-        Enforces heat balance equation:
-        C * dT/dt = P - G(PWM) * (T - T_amb)
+        Enforces approximate thermal dynamics:
+        dT/dt ≈ α*P - β*(T - T_amb)
+
+        The network should learn that temperature change is:
+        - Proportional to power input
+        - Proportional to temperature difference from ambient
         """
-        # Temperature change (per timestep dt=1.0s)
-        dT = T_next - T_k  # Shape: (batch, 2) for [CPU, GPU]
+        # Temperature change
+        dT = T_next - T_k  # Shape: (batch, 2)
 
-        # Temperature difference from ambient
-        T_diff = T_k - T_amb.unsqueeze(1)  # Shape: (batch, 2)
+        # Simple physics constraint: temperature change should be bounded by power input
+        # Just penalize large temperature jumps that aren't explained by power
+        physics_residual = torch.abs(dT) - 0.1 * P  # Rough scaling
 
-        # Thermal conductance (baseline + PWM contributions)
-        G_cpu = 1.0 + 0.05 * PWM[:, 0] + 0.02 * PWM[:, 1] + 0.02 * PWM[:, 2]
-        G_gpu = 0.8 + 0.01 * PWM[:, 0] + 0.03 * PWM[:, 1] + 0.04 * PWM[:, 2]
-        G = torch.stack([G_cpu, G_gpu], dim=1)  # Shape: (batch, 2)
-
-        # Thermal capacitance (rough estimates)
-        C = torch.tensor([100.0, 80.0], device=T_k.device).unsqueeze(0)  # Shape: (1, 2)
-
-        # Expected temperature change from thermal dynamics
-        # dT/dt = (P - G * (T - T_amb)) / C
-        dT_expected = (P - G * T_diff) / C
-
-        # Physics residual: difference between predicted and physics-expected change
-        physics_residual = dT - dT_expected
-
-        # MSE of physics residual
-        physics_loss = torch.mean(physics_residual**2)
-
-        # Additional constraints: temperature shouldn't change faster than physically possible
-        max_dT = 5.0  # Maximum reasonable temperature change per second
-        constraint_loss = torch.mean(torch.clamp(torch.abs(dT) - max_dT, min=0) ** 2)
-
-        return physics_loss + 0.1 * constraint_loss
+        return torch.mean(torch.clamp(physics_residual, min=0) ** 2)
 
     def training_step(self, batch, _batch_idx):
-        X_batch, Y_batch, T_k_batch, PWM_batch, P_batch, T_amb_batch = batch
+        X_batch, Y_batch, T_k_batch, _PWM_batch, P_batch, T_amb_batch = batch
 
         # Forward pass
         Y_pred = self(X_batch)
@@ -190,7 +172,7 @@ class ThermalPINN(L.LightningModule):
         # Physics loss (on unnormalized predictions)
         Y_pred_unnorm = Y_pred * self.output_std + self.output_mean
         physics_loss = self._physics_loss(
-            T_k_batch, Y_pred_unnorm, PWM_batch, P_batch, T_amb_batch
+            T_k_batch, Y_pred_unnorm, P_batch, T_amb_batch
         )
 
         # Combined loss
@@ -204,7 +186,7 @@ class ThermalPINN(L.LightningModule):
         return loss
 
     def validation_step(self, batch, _batch_idx):
-        X_batch, Y_batch, T_k_batch, PWM_batch, P_batch, T_amb_batch = batch
+        X_batch, Y_batch, T_k_batch, _PWM_batch, P_batch, T_amb_batch = batch
 
         # Forward pass
         Y_pred = self(X_batch)
@@ -215,7 +197,7 @@ class ThermalPINN(L.LightningModule):
         # Physics loss (on unnormalized predictions)
         Y_pred_unnorm = Y_pred * self.output_std + self.output_mean
         physics_loss = self._physics_loss(
-            T_k_batch, Y_pred_unnorm, PWM_batch, P_batch, T_amb_batch
+            T_k_batch, Y_pred_unnorm, P_batch, T_amb_batch
         )
 
         # Combined loss

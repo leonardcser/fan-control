@@ -13,24 +13,24 @@ preprocess:
 
 # Model Configuration
 model:
-  type: pinn # physics | pinn | gbr | gp
+  type: physics # physics | pinn | gbr | gp
 
   # Feature configuration (shared across models)
   features:
     state:
-    - T_cpu
-    - T_gpu
+      - T_cpu
+      - T_gpu
     control:
-    - pwm2
-    - pwm4
-    - pwm5
+      - pwm2
+      - pwm4
+      - pwm5
     disturbance:
-    - P_cpu
-    - P_gpu
-    - T_amb
+      - P_cpu
+      - P_gpu
+      - T_amb
     targets:
-    - T_cpu
-    - T_gpu
+      - T_cpu
+      - T_gpu
   physics:
     dt: 1.0 # Time step (seconds)
     # Initial parameter guesses (will be optimized during training)
@@ -48,12 +48,12 @@ model:
   # PINN model parameters (Physics-Informed Neural Network)
   pinn:
     hidden_dims:
-    - 64
-    - 32
+      - 64
+      - 32
     epochs: 25
     learning_rate: 0.001
     batch_size: 128
-    physics_weight: 0.5
+    physics_weight: 0.1
     dropout: 0.15
     dt: 1.0
     early_stopping_patience: 5
@@ -76,9 +76,9 @@ model:
 evaluate:
   horizons: # Multi-step rollout horizons to test
     # Optimizer Configuration
-  - 10
-  - 20
-  - 50
+    - 10
+    - 20
+    - 50
 optimizer:
   method: COBYLA
   options:
