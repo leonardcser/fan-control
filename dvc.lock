@@ -65,33 +65,34 @@ stages:
           targets:
           - T_cpu
           - T_gpu
-        model.pinn:
-          hidden_dims:
-          - 64
-          - 32
-          epochs: 25
-          learning_rate: 0.001
-          batch_size: 128
-          physics_weight: 0.5
-          dropout: 0.15
+        model.physics:
           dt: 1.0
-          early_stopping_patience: 5
-        model.type: pinn
+          C_cpu: 100.0
+          C_gpu: 80.0
+          G_cpu_base: 1.0
+          G_gpu_base: 0.8
+          G_cpu_pwm2: 0.05
+          G_cpu_pwm4: 0.02
+          G_cpu_pwm5: 0.02
+          G_gpu_pwm2: 0.01
+          G_gpu_pwm4: 0.03
+          G_gpu_pwm5: 0.04
+        model.type: physics
     outs:
     - path: out/train/logs
       hash: md5
-      md5: 2ec33b50b9c1a363c4ae6b621c0edff5.dir
-      size: 10788
-      nfiles: 2
+      md5: d751713988987e9331980363e24189ce.dir
+      size: 0
+      nfiles: 0
     - path: out/train/metrics.json
       hash: md5
-      md5: 1bd1f3cd7e492e3bbcb3f071a905697f
-      size: 185
-    - path: out/train/models/pinn/
+      md5: 08ea03d424b5683e37503f5976907be1
+      size: 226
+    - path: out/train/models/physics/
       hash: md5
-      md5: 904abcc4ffe68158afc336a9bfe4dc4a.dir
-      size: 20395
-      nfiles: 2
+      md5: b35ebb797ba90657f506fd84a80e9fa3.dir
+      size: 1552
+      nfiles: 1
   evaluate:
     cmd: python -m fan_control.pipeline.evaluate
     deps:
@@ -99,11 +100,11 @@ stages:
       hash: md5
       md5: 74861f1dc3c653649bb49126987306d2
       size: 3545623
-    - path: out/train/models/pinn/
+    - path: out/train/models/physics/
       hash: md5
-      md5: 904abcc4ffe68158afc336a9bfe4dc4a.dir
-      size: 20395
-      nfiles: 2
+      md5: b35ebb797ba90657f506fd84a80e9fa3.dir
+      size: 1552
+      nfiles: 1
     - path: src/fan_control/models/
       hash: md5
       md5: 06c90d1fc603876016915106694197ac.dir
@@ -119,14 +120,14 @@ stages:
         - 10
         - 20
         - 50
-        model.type: pinn
+        model.type: physics
     outs:
     - path: out/evaluate/metrics.json
       hash: md5
-      md5: aabebc2a2574c2f7a70d1fce28609883
-      size: 1817
+      md5: b659b8b0976ad5591d31c2d8417ad2d8
+      size: 1822
     - path: out/evaluate/plots
       hash: md5
-      md5: fed74e9e455d906314f08c30ca894451.dir
-      size: 581337
+      md5: a1f711acc5ee6a4d16e1e3b8ab8a2987.dir
+      size: 526401
       nfiles: 5

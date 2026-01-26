@@ -50,7 +50,10 @@ class FanController:
 
         # Load targets and interval from params
         self.targets = self.params["controller"]["targets"]
-        self.interval = self.params["controller"]["interval"]
+        if "mpc" in self.params and "dt" in self.params["mpc"]:
+            self.interval = self.params["mpc"]["dt"]
+        else:
+            self.interval = self.params["controller"]["interval"]
 
         # State tracking for optimization continuity
         self.last_pwms = {name: 50.0 for name in self.optimizer.pwm_names}
@@ -97,9 +100,20 @@ class FanController:
             return  # Safety triggered, skip optimization
 
         # 3. Optimize
-        optimal_pwms = self.optimizer.optimize(
-            state, self.targets, initial_guess=self.last_pwms
-        )
+        if "mpc" in self.params:
+            mpc_cfg = self.params["mpc"]
+            optimal_pwms = self.optimizer.optimize_horizon(
+                state,
+                self.targets,
+                prediction_horizon=mpc_cfg.get("prediction_horizon", 10),
+                control_horizon=mpc_cfg.get("control_horizon", 5),
+                cost_weights=mpc_cfg.get("weights"),
+                initial_guess=self.last_pwms,
+            )
+        else:
+            optimal_pwms = self.optimizer.optimize(
+                state, self.targets, initial_guess=self.last_pwms
+            )
 
         # Update state
         self.last_pwms = {k: float(v) for k, v in optimal_pwms.items()}
@@ -115,11 +129,11 @@ class FanController:
     def _read_sensors(self) -> Optional[Dict[str, float]]:
         """Read current system state."""
         try:
-            p_cpu = self.hw.get_cpu_power()
+            p_cpu_data = self.hw.get_cpu_power()
             p_gpu = self.hw.get_gpu_power()
             t_amb = self.hw.get_ambient_temp()
             return {
-                "P_cpu": float(p_cpu) if p_cpu else 0.0,
+                "P_cpu": float(p_cpu_data["package"]) if p_cpu_data else 0.0,
                 "P_gpu": float(p_gpu) if p_gpu else 0.0,
                 "T_amb": float(t_amb) if t_amb else 25.0,
                 "T_cpu": float(self.hw.get_cpu_temp()),
