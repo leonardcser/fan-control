@@ -89,14 +89,14 @@ optimizer:
 # Controller Configuration
 controller:
   targets:
-    T_cpu: 83.0
-    T_gpu: 60.0
-  interval: 2.0
+    T_cpu: 85.0
+    T_gpu: 65.0
+  interval: 1.0
 
 mpc:
-  prediction_horizon: 10
+  prediction_horizon: 30
   control_horizon: 5
-  dt: 2.0
+  dt: 1.0
   weights:
     effort: 1.0
     smoothness: 0.1
