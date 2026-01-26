@@ -775,51 +775,49 @@ name = "fan-control"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "gpytorch" },
+    { name = "joblib" },
+    { name = "lightning" },
     { name = "numpy" },
+    { name = "pandas" },
     { name = "pyyaml" },
     { name = "requests" },
     { name = "scikit-learn" },
     { name = "scipy" },
+    { name = "tensorboard" },
+    { name = "torch" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "dvc" },
     { name = "dvclive" },
-    { name = "gpytorch" },
-    { name = "joblib" },
-    { name = "lightning" },
     { name = "matplotlib" },
-    { name = "pandas" },
-    { name = "scikit-learn" },
     { name = "seaborn" },
-    { name = "tensorboard" },
-    { name = "torch" },
     { name = "tqdm" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "gpytorch", specifier = ">=1.15.1" },
+    { name = "joblib", specifier = ">=1.4.0" },
+    { name = "lightning", specifier = ">=2.6.0" },
     { name = "numpy", specifier = ">=2.4.1" },
+    { name = "pandas", specifier = ">=2.3.3" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "requests", specifier = ">=2.32.0" },
     { name = "scikit-learn", specifier = ">=1.8.0" },
     { name = "scipy", specifier = ">=1.17.0" },
+    { name = "tensorboard", specifier = ">=2.20.0" },
+    { name = "torch", specifier = ">=2.9.1" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "dvc", specifier = ">=3.66.1" },
     { name = "dvclive", specifier = ">=3.49.0" },
-    { name = "gpytorch", specifier = ">=1.15.1" },
-    { name = "joblib", specifier = ">=1.4.0" },
-    { name = "lightning", specifier = ">=2.6.0" },
     { name = "matplotlib", specifier = ">=3.10.8" },
-    { name = "pandas", specifier = ">=2.3.3" },
-    { name = "scikit-learn", specifier = ">=1.8.0" },
     { name = "seaborn", specifier = ">=0.13.2" },
-    { name = "tensorboard", specifier = ">=2.20.0" },
-    { name = "torch", specifier = ">=2.9.1" },
     { name = "tqdm", specifier = "==4.67.1" },
 ]
 
