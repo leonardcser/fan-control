@@ -82,21 +82,22 @@ evaluate:
 optimizer:
   method: COBYLA
   options:
-    maxiter: 200
-    rhobeg: 15.0
-    tol: 0.5
+    maxiter: 300
+    rhobeg: 5.0 # Smaller trust region for smoother steps
+    tol: 0.1 # Tighter tolerance
 
 # Controller Configuration
 controller:
   targets:
     T_cpu: 85.0
-    T_gpu: 65.0
+    T_gpu: 70.0
   interval: 1.0
 
 mpc:
-  prediction_horizon: 30
-  control_horizon: 5
+  prediction_horizon: 10 # Reduced - model only accurate ~10 steps
+  control_horizon: 10 # Match prediction horizon for full control
   dt: 1.0
   weights:
     effort: 1.0
-    smoothness: 0.1
+    smoothness: 3.0 # Reduced - allow faster response
+    temperature: 8.0 # Increased - prioritize temp control

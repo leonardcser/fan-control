@@ -5,10 +5,13 @@ Finds minimal fan speeds to satisfy temperature constraints using the
 DynamicThermalModel interface for predictions.
 """
 
+import logging
 import numpy as np
 from pathlib import Path
 from scipy.optimize import minimize
 from typing import Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 from fan_control.models import load_model
 from fan_control.models.base import DynamicThermalModel
@@ -81,6 +84,25 @@ class Optimizer:
             min_val = dev_cfg["min_pwm"]
             bounds.append((float(min_val), 100.0))
         return bounds
+
+    def _snap_pwm(self, value: float, device_name: str) -> int:
+        """Snap PWM value to avoid dead zone between 0 and stall_pwm.
+
+        Values in (0, stall_pwm) are snapped to 0 (off) since the fan
+        would stall anyway and waste power without moving air.
+        """
+        dev_cfg = self.devices[device_name]
+        stall_pwm = dev_cfg.get("stall_pwm", 0)
+        min_pwm = dev_cfg["min_pwm"]
+
+        # Clamp to bounds first
+        value = max(min_pwm, min(100.0, value))
+
+        # Snap dead zone to 0 (if min_pwm allows 0)
+        if min_pwm == 0 and 0 < value < stall_pwm:
+            return 0
+
+        return int(round(value))
 
     def optimize(
         self,
@@ -175,12 +197,10 @@ class Optimizer:
             options=options,
         )
 
-        # Convert to integer PWM values
+        # Convert to integer PWM values with dead zone snapping
         optimal_pwms = {}
         for i, name in enumerate(self.pwm_names):
-            min_val, max_val = self.bounds[i]
-            clipped = np.clip(result.x[i], min_val, max_val)
-            optimal_pwms[name] = int(round(clipped))
+            optimal_pwms[name] = self._snap_pwm(result.x[i], name)
 
         return optimal_pwms
 
@@ -213,13 +233,22 @@ class Optimizer:
         # Ensure M <= N
         control_horizon = min(control_horizon, prediction_horizon)
 
-        # Default weights
+        # Weights from config (required)
         if cost_weights is None:
-            w_effort = 1.0
-            w_smooth = 0.1
-        else:
-            w_effort = cost_weights.get("effort", 1.0)
-            w_smooth = cost_weights.get("smoothness", 0.1)
+            raise ValueError("cost_weights is required for MPC optimization")
+        w_effort = cost_weights["effort"]
+        w_smooth = cost_weights["smoothness"]
+        w_temp = cost_weights["temperature"]
+
+        target_cpu = targets["T_cpu"]
+        target_gpu = targets["T_gpu"]
+
+        # Soft limit margins - proportional to available headroom
+        # GPU has tighter limit (65°C) so use smaller margin
+        margin_cpu = 15.0  # Start penalizing 15°C before CPU limit (at 70°C for 85°C target)
+        margin_gpu = 10.0  # Start penalizing 10°C before GPU limit (at 55°C for 65°C target)
+        soft_limit_cpu = target_cpu - margin_cpu
+        soft_limit_gpu = target_gpu - margin_gpu
 
         # Optimization variables: [u_0, u_1, ..., u_{M-1}] flattened
         # Size: n_pwm * control_horizon
@@ -239,9 +268,6 @@ class Optimizer:
             x0 = np.tile(u0_single, control_horizon)
             current_pwm_vec = u0_single
 
-        target_cpu = targets["T_cpu"]
-        target_gpu = targets["T_gpu"]
-
         T_k = np.array(
             [
                 current_state.get("T_cpu", 50.0),
@@ -255,6 +281,8 @@ class Optimizer:
             ]
         )
         T_amb = current_state.get("T_amb", 25.0)
+
+        logger.debug(f"MPC input: P=[{P[0]:.1f}, {P[1]:.1f}]W, T_amb={T_amb:.1f}°C")
 
         cache = {}
 
@@ -294,25 +322,48 @@ class Optimizer:
         def objective(x: np.ndarray) -> float:
             """
             Cost function:
-            J = sum(w_effort * ||u_k||^2 + w_smooth * ||u_k - u_{k-1}||^2)
+            J = w_effort * ||u||^2 + w_smooth * ||Δu||^2 + w_temp * temp_cost
+
+            The temperature cost penalizes temperatures approaching limits,
+            creating a smooth barrier that keeps the system away from constraints.
             """
             U = x.reshape((control_horizon, self.n_pwm))
 
-            # Effort cost (sum of squared PWMs)
-            effort = np.sum(U**2)
+            # Effort cost (sum of squared PWMs, normalized by 100^2)
+            effort = np.sum(U**2) / 10000.0
 
-            # Smoothness cost (sum of squared differences)
-            # For k=0, assume previous control was similar or just penalize change from current
-            # Here we penalize change between optimized steps.
+            # Smoothness cost (sum of squared differences, normalized)
             diffs = np.diff(U, axis=0)
-            smoothness = np.sum(diffs**2)
+            smoothness = np.sum(diffs**2) / 10000.0
 
             # Penalize difference from current state (continuity)
             if current_pwm_vec is not None:
                 jump = U[0] - current_pwm_vec
-                smoothness += np.sum(jump**2)
+                smoothness += np.sum(jump**2) / 10000.0
 
-            return (w_effort * effort + w_smooth * smoothness) * 1e-4
+            # Temperature tracking cost - soft barrier approaching limits
+            traj = get_trajectory(x)
+
+            # Quadratic penalty for temperatures above soft limits
+            # This creates a smooth cost that increases as T approaches the hard limit
+            temp_cost = 0.0
+            for k in range(prediction_horizon + 1):
+                T_cpu_k = traj[k, 0]
+                T_gpu_k = traj[k, 1]
+
+                # CPU: penalize when above soft_limit_cpu
+                if T_cpu_k > soft_limit_cpu:
+                    # Normalized by margin squared so cost ~ 1.0 at hard limit
+                    temp_cost += ((T_cpu_k - soft_limit_cpu) / margin_cpu) ** 2
+
+                # GPU: penalize when above soft_limit_gpu
+                if T_gpu_k > soft_limit_gpu:
+                    temp_cost += ((T_gpu_k - soft_limit_gpu) / margin_gpu) ** 2
+
+            # Average over horizon
+            temp_cost /= (prediction_horizon + 1)
+
+            return w_effort * effort + w_smooth * smoothness + w_temp * temp_cost
 
         def constraint_cpu_max(x: np.ndarray) -> float:
             traj = get_trajectory(x)
@@ -326,6 +377,51 @@ class Optimizer:
             {"type": "ineq", "fun": constraint_cpu_max},
             {"type": "ineq", "fun": constraint_gpu_max},
         ]
+
+        # Rate limit: max PWM change per step (prevents sudden jumps)
+        max_rate = 25.0  # Max 25% change per second
+
+        # Rate constraint from current PWM to first control action
+        # Two constraints: u[0] - curr <= max_rate AND curr - u[0] <= max_rate
+        if current_pwm_vec is not None:
+            for i in range(self.n_pwm):
+                curr = current_pwm_vec[i]
+                # u[0,i] - curr <= max_rate
+                constraints.append(
+                    {
+                        "type": "ineq",
+                        "fun": lambda x, i=i, c=curr: max_rate - (x[i] - c),
+                    }
+                )
+                # curr - u[0,i] <= max_rate
+                constraints.append(
+                    {
+                        "type": "ineq",
+                        "fun": lambda x, i=i, c=curr: max_rate - (c - x[i]),
+                    }
+                )
+
+        # Rate constraints between consecutive control actions
+        for k in range(control_horizon - 1):
+            for i in range(self.n_pwm):
+                idx_curr = k * self.n_pwm + i
+                idx_next = (k + 1) * self.n_pwm + i
+                # u[k+1] - u[k] <= max_rate
+                constraints.append(
+                    {
+                        "type": "ineq",
+                        "fun": lambda x, ic=idx_curr, inext=idx_next: max_rate
+                        - (x[inext] - x[ic]),
+                    }
+                )
+                # u[k] - u[k+1] <= max_rate
+                constraints.append(
+                    {
+                        "type": "ineq",
+                        "fun": lambda x, ic=idx_curr, inext=idx_next: max_rate
+                        - (x[ic] - x[inext]),
+                    }
+                )
 
         # Bounds constraints for all variables
         for k in range(control_horizon):
@@ -354,10 +450,42 @@ class Optimizer:
         x_opt = result.x
         u_0 = x_opt[: self.n_pwm]
 
+        # Debug logging - show what the optimizer is thinking
+        traj = get_trajectory(x_opt)
+        T_cpu_pred = traj[:, 0]
+        T_gpu_pred = traj[:, 1]
+        U_opt = x_opt.reshape((control_horizon, self.n_pwm))
+
+        # Compute cost breakdown
+        effort = np.sum(U_opt**2) / 10000.0
+        diffs = np.diff(U_opt, axis=0)
+        smoothness = np.sum(diffs**2) / 10000.0
+        if current_pwm_vec is not None:
+            jump = U_opt[0] - current_pwm_vec
+            smoothness += np.sum(jump**2) / 10000.0
+
+        temp_cost = 0.0
+        for k in range(prediction_horizon + 1):
+            if T_cpu_pred[k] > soft_limit_cpu:
+                temp_cost += ((T_cpu_pred[k] - soft_limit_cpu) / margin_cpu) ** 2
+            if T_gpu_pred[k] > soft_limit_gpu:
+                temp_cost += ((T_gpu_pred[k] - soft_limit_gpu) / margin_gpu) ** 2
+        temp_cost /= (prediction_horizon + 1)
+
+        cpu_margin = target_cpu - np.max(T_cpu_pred)
+        gpu_margin = target_gpu - np.max(T_gpu_pred)
+
+        logger.debug(
+            f"MPC: T_now=[{T_k[0]:.1f}, {T_k[1]:.1f}] | "
+            f"T_pred_max=[{np.max(T_cpu_pred):.1f}, {np.max(T_gpu_pred):.1f}] | "
+            f"Margin=[{cpu_margin:.1f}, {gpu_margin:.1f}] | "
+            f"Cost: eff={w_effort*effort:.3f} smo={w_smooth*smoothness:.3f} tmp={w_temp*temp_cost:.3f} | "
+            f"u0={U_opt[0].astype(int)}"
+        )
+
+        # Convert to integer PWM values with dead zone snapping
         optimal_pwms = {}
         for i, name in enumerate(self.pwm_names):
-            min_val, max_val = self.bounds[i]
-            clipped = np.clip(u_0[i], min_val, max_val)
-            optimal_pwms[name] = int(round(clipped))
+            optimal_pwms[name] = self._snap_pwm(u_0[i], name)
 
         return optimal_pwms

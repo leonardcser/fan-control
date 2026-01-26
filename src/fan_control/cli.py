@@ -11,12 +11,14 @@ from pathlib import Path
 from .control.controller import FanController
 from .control.cool import cool_mode
 
-# Configure logging to stdout
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
-)
+def setup_logging(debug: bool = False) -> None:
+    """Configure logging to stdout."""
+    level = logging.DEBUG if debug else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
 
 
 def run_command(args) -> None:
@@ -69,6 +71,11 @@ def main():
         description="Fan controller for thermal optimization",
         prog="fan-control",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging",
+    )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -91,6 +98,9 @@ def main():
     cool_parser.set_defaults(func=cool_mode)
 
     args = parser.parse_args()
+
+    # Setup logging based on --debug flag
+    setup_logging(debug=args.debug)
 
     if not hasattr(args, "func"):
         parser.print_help()
