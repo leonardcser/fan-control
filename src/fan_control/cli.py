@@ -28,10 +28,21 @@ def run_command(args) -> None:
     print("=" * 70 + "\n")
 
     config_path = Path(args.config)
-    run_dir = Path(args.run)
 
-    # Locate model file
-    model_path = run_dir / "fit" / "thermal_model.pkl"
+    # Load config to find model type
+    if not config_path.exists():
+        print(f"✗ Config file not found: {config_path}")
+        sys.exit(1)
+
+    import yaml
+
+    with open(config_path.parent / "params.yaml") as f:
+        params = yaml.safe_load(f)
+
+    model_type = params["model"]["type"]
+
+    # Locate model file based on DVC output path: out/train/models/${model.type}/
+    model_path = Path("out/train/models") / model_type
 
     if not model_path.exists():
         print(f"✗ Model not found at: {model_path}")
@@ -65,22 +76,17 @@ def main():
     run_parser = subparsers.add_parser("run", help="Run the fan controller optimizer")
     run_parser.add_argument(
         "--config",
-        required=True,
-        help="Path to config.yaml",
-    )
-    run_parser.add_argument(
-        "--run",
-        required=True,
-        help="Path to run directory containing fit/thermal_model.pkl",
+        default="config.yaml",
+        help="Path to config.yaml (default: config.yaml)",
     )
     run_parser.set_defaults(func=run_command)
 
     # cool command
-    cool_parser = subparsers.add_parser("cool", help="Set all fans to 100%")
+    cool_parser = subparsers.add_parser("cool", help="Set all fans to 100%%")
     cool_parser.add_argument(
         "--config",
-        required=True,
-        help="Path to config.yaml",
+        default="config.yaml",
+        help="Path to config.yaml (default: config.yaml)",
     )
     cool_parser.set_defaults(func=cool_mode)
 
