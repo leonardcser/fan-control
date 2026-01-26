@@ -189,6 +189,7 @@ class GradientBoostingModel(DynamicThermalModel):
         PWM: np.ndarray,
         P: np.ndarray,
         T_amb: float,
+        extra_features: Optional[Dict[str, float]] = None,
     ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
         """
         Predict next-step temperatures.
@@ -198,6 +199,7 @@ class GradientBoostingModel(DynamicThermalModel):
             PWM: Fan values [pwm2, pwm4, pwm5]
             P: Power [P_cpu, P_gpu]
             T_amb: Ambient temperature
+            extra_features: Optional dict of additional features (e.g., cpu_busy_pct)
 
         Returns:
             (T_next, None) - GBR doesn't provide uncertainty
@@ -212,6 +214,10 @@ class GradientBoostingModel(DynamicThermalModel):
         features["P_cpu"] = P[0]
         features["P_gpu"] = P[1]
         features["T_amb"] = T_amb
+
+        # Add extra features if provided (e.g., cpu_busy_pct for throttling)
+        if extra_features:
+            features.update(extra_features)
 
         # Extract in correct order
         X = np.array([[features.get(f, 0.0) for f in self.feature_names_in_]])

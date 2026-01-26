@@ -409,6 +409,19 @@ if __name__ == "__main__":
         if col.startswith("pwm"):
             df[col] = df[col] / 2.55
 
+    # 6. Add aggregate throttling-aware features
+    # CPU busy percentage (indicates throttling when high temp but low busy %)
+    busy_cols = [c for c in df.columns if c.startswith("cpu_busy_pct_core")]
+    if busy_cols:
+        df["cpu_busy_pct"] = df[busy_cols].mean(axis=1)
+        logger.info(f"Added cpu_busy_pct feature (mean of {len(busy_cols)} cores)")
+
+    # CPU frequency (drops when throttling)
+    mhz_cols = [c for c in df.columns if c.startswith("cpu_bzy_mhz_core")]
+    if mhz_cols:
+        df["cpu_total_mhz"] = df[mhz_cols].sum(axis=1)
+        logger.info(f"Added cpu_total_mhz feature (sum of {len(mhz_cols)} cores)")
+
     # 6. Generate EDA plots from filtered data
     plots_dir = Path("data/processed/plots")
     generate_eda_plots(df.copy(), plots_dir)

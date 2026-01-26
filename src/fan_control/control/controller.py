@@ -132,12 +132,21 @@ class FanController:
             p_cpu_data = self.hw.get_cpu_power()
             p_gpu = self.hw.get_gpu_power()
             t_amb = self.hw.get_ambient_temp()
+
+            # Calculate average CPU busy percentage (throttling indicator)
+            cpu_busy_pct = 0.0
+            if p_cpu_data and "cores" in p_cpu_data:
+                busy_values = [c["busy_pct"] for c in p_cpu_data["cores"].values()]
+                if busy_values:
+                    cpu_busy_pct = sum(busy_values) / len(busy_values)
+
             return {
                 "P_cpu": float(p_cpu_data["package"]) if p_cpu_data else 0.0,
                 "P_gpu": float(p_gpu) if p_gpu else 0.0,
                 "T_amb": float(t_amb) if t_amb else 25.0,
                 "T_cpu": float(self.hw.get_cpu_temp()),
                 "T_gpu": float(self.hw.get_gpu_temp()),
+                "cpu_busy_pct": cpu_busy_pct,
             }
         except Exception as e:
             logger.error(f"Sensor read error: {e}")

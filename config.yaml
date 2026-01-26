@@ -99,33 +99,94 @@ data_collection:
   # Episode types for different PWM variation strategies
   episode_types:
     - mode: "single_isolation"
+      enabled: false
       repeats_per_load: 3 # × 3 fans = 9 episodes per load
 
     - mode: "pair_isolation"
+      enabled: false
       repeats_per_load: 3 # × 3 pairs = 9 episodes per load
 
     - mode: "full_sequential"
+      enabled: false
       repeats_per_load: 3 # = 3 episodes per load
+
+    # Structured step responses for transient dynamics
+    - mode: "step_response"
+      target_loads:
+        - cpu_6
+        - cpu_10
+        - cpu_16
+        - cpu_6_gpu_30pct
+        - cpu_8_gpu_70pct
+      transitions:
+        # Critical: cooling from hot state (low fans → high fans)
+        - from: { pwm2: 20, pwm4: 0, pwm5: 0 }
+          to: { pwm2: 100, pwm4: 80, pwm5: 100 }
+          settle: 90 # Settle at low fans (will heat up)
+          observe: 60 # Observe cooling after step
+
+        # Reverse: heating after cool state (high fans → low fans)
+        - from: { pwm2: 100, pwm4: 80, pwm5: 100 }
+          to: { pwm2: 20, pwm4: 0, pwm5: 0 }
+          settle: 60 # Settle at high fans (will cool)
+          observe: 90 # Observe heating after step
+
+        # Radiator-only step (isolate pwm2 effect at high temps)
+        - from: { pwm2: 20, pwm4: 0, pwm5: 0 }
+          to: { pwm2: 100, pwm4: 0, pwm5: 0 }
+          settle: 90
+          observe: 60
+
+        # Case-fans-only step (isolate pwm4+5 effect at high temps)
+        - from: { pwm2: 20, pwm4: 0, pwm5: 0 }
+          to: { pwm2: 20, pwm4: 80, pwm5: 100 }
+          settle: 90
+          observe: 60
+
+    # PRBS for rich system identification data
+    - mode: "prbs"
+      target_loads:
+        - cpu_6
+        - cpu_10
+        - cpu_16
+        - cpu_6_gpu_30pct
+        - cpu_8_gpu_70pct
+      duration: 600 # 10 minutes per episode
+      level_low: { pwm2: 25, pwm4: 0, pwm5: 0 }
+      level_high: { pwm2: 100, pwm4: 80, pwm5: 100 }
+      hold_times: [10, 15, 20, 30, 45] # Random switching intervals
+
+    # Staircase for nonlinearity identification
+    - mode: "staircase"
+      target_loads:
+        - cpu_6
+        - cpu_10
+        - cpu_16
+        - cpu_6_gpu_30pct
+        - cpu_8_gpu_70pct
+      levels: [20, 35, 50, 65, 80, 100, 80, 65, 50, 35, 20] # Up and down
+      hold_per_step: 45 # Seconds at each level
+      fan_scale: { pwm2: 1.0, pwm4: 0.8, pwm5: 1.0 } # Scale factor per fan
 
   # Load levels to test
   # Note: cpu_load accepts 'stress' flags (e.g. '--cpu 6')
   #       gpu_load accepts 'gpu_load.py' flags (e.g. '--load 50 --memory 30')
   #       Empty string "" means idle/off.
   load_levels:
-    - cpu_load: ""
-      gpu_load: ""
-      description: "idle"
+    # - cpu_load: ""
+    #   gpu_load: ""
+    #   description: "idle"
 
     # CPU focused loads (assuming 24 cores)
-    - cpu_load: "--cpu 1"
-      gpu_load: ""
-      description: "cpu_1"
-    - cpu_load: "--cpu 2"
-      gpu_load: ""
-      description: "cpu_2"
-    - cpu_load: "--cpu 4"
-      gpu_load: ""
-      description: "cpu_4"
+    # - cpu_load: "--cpu 1"
+    #   gpu_load: ""
+    #   description: "cpu_1"
+    # - cpu_load: "--cpu 2"
+    #   gpu_load: ""
+    #   description: "cpu_2"
+    # - cpu_load: "--cpu 4"
+    #   gpu_load: ""
+    #   description: "cpu_4"
     - cpu_load: "--cpu 6"
       gpu_load: ""
       description: "cpu_6"
@@ -135,52 +196,52 @@ data_collection:
     - cpu_load: "--cpu 16"
       gpu_load: ""
       description: "cpu_16"
-    - cpu_load: "--cpu 24"
-      gpu_load: ""
-      description: "cpu_24"
+    # - cpu_load: "--cpu 24"
+    #   gpu_load: ""
+    #   description: "cpu_24"
 
     # GPU focused loads
-    - cpu_load: ""
-      gpu_load: "--load 5"
-      description: "gpu_5pct"
-    - cpu_load: ""
-      gpu_load: "--load 10"
-      description: "gpu_10pct"
-    - cpu_load: ""
-      gpu_load: "--load 50"
-      description: "gpu_50pct"
-    - cpu_load: ""
-      gpu_load: "--load 60"
-      description: "gpu_60pct"
-    - cpu_load: ""
-      gpu_load: "--load 70"
-      description: "gpu_70pct"
-    - cpu_load: ""
-      gpu_load: "--load 100"
-      description: "gpu_100pct"
+    # - cpu_load: ""
+    #   gpu_load: "--load 5"
+    #   description: "gpu_5pct"
+    # - cpu_load: ""
+    #   gpu_load: "--load 10"
+    #   description: "gpu_10pct"
+    # - cpu_load: ""
+    #   gpu_load: "--load 50"
+    #   description: "gpu_50pct"
+    # - cpu_load: ""
+    #   gpu_load: "--load 60"
+    #   description: "gpu_60pct"
+    # - cpu_load: ""
+    #   gpu_load: "--load 70"
+    #   description: "gpu_70pct"
+    # - cpu_load: ""
+    #   gpu_load: "--load 100"
+    #   description: "gpu_100pct"
 
     # Mixed loads
-    - cpu_load: "--cpu 1"
-      gpu_load: "--load 100"
-      description: "cpu_1_gpu_100pct"
-    - cpu_load: "--cpu 2"
-      gpu_load: "--load 100"
-      description: "cpu_2_gpu_100pct"
-    - cpu_load: "--cpu 24"
-      gpu_load: "--load 100"
-      description: "cpu_24_gpu_100pct"
-    - cpu_load: "--cpu 4"
-      gpu_load: "--load 50"
-      description: "cpu_4_gpu_50pct"
+    # - cpu_load: "--cpu 1"
+    #   gpu_load: "--load 100"
+    #   description: "cpu_1_gpu_100pct"
+    # - cpu_load: "--cpu 2"
+    #   gpu_load: "--load 100"
+    #   description: "cpu_2_gpu_100pct"
+    # - cpu_load: "--cpu 24"
+    #   gpu_load: "--load 100"
+    #   description: "cpu_24_gpu_100pct"
+    # - cpu_load: "--cpu 4"
+    #   gpu_load: "--load 50"
+    #   description: "cpu_4_gpu_50pct"
     - cpu_load: "--cpu 8"
       gpu_load: "--load 70"
       description: "cpu_8_gpu_70pct"
     - cpu_load: "--cpu 6"
       gpu_load: "--load 30"
       description: "cpu_6_gpu_30pct"
-    - cpu_load: "--cpu 12"
-      gpu_load: "--load 50"
-      description: "cpu_12_gpu_50pct"
+    # - cpu_load: "--cpu 12"
+    #   gpu_load: "--load 50"
+    #   description: "cpu_12_gpu_50pct"
 
   # Time-series collection parameters
   sample_interval: 1.0 # Seconds between samples (1Hz)

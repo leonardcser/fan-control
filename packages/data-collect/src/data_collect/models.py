@@ -146,7 +146,19 @@ class PWMStep:
 class EpisodeType:
     """Configuration for an episode type."""
 
-    mode: str  # "single_isolation", "pair_isolation", or "full_sequential"
-    repeats_per_load: int  # Number of episodes per load level for this type
+    mode: str  # Episode mode (see below)
+    repeats_per_load: int = 1  # Number of episodes per load level for this type
+
+    # Additional config stored as dict for flexibility
+    # Parsed by EpisodeCollector based on mode
+    config: dict = field(default_factory=dict)
+
+    # Supported modes:
+    # - "single_isolation": Vary one fan, others at minimum
+    # - "pair_isolation": Vary two fans, third at minimum
+    # - "full_sequential": All fans vary randomly
+    # - "step_response": Structured PWM transitions (settle → step → observe)
+    # - "prbs": Pseudo-random binary sequence for system identification
+    # - "staircase": Progressive PWM levels for nonlinearity identification
 
 

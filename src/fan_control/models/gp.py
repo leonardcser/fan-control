@@ -224,13 +224,17 @@ class GaussianProcessModel(DynamicThermalModel):
         PWM: np.ndarray,
         P: np.ndarray,
         T_amb: float,
+        extra_features: Optional[Dict[str, float]] = None,
     ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
         """
         Predict next temperatures with uncertainty.
 
         Returns:
             (T_next, std) - mean prediction and standard deviation
+
+        Note: extra_features is currently ignored by GP model.
         """
+        del extra_features  # Not yet implemented for GP
         if self.cpu_model is None or self.gpu_model is None:
             raise RuntimeError("Model not trained")
 

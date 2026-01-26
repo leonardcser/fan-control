@@ -174,6 +174,128 @@ class PWMScheduleGenerator:
 
         return steps
 
+    def generate_step_response(
+        self,
+        transition: dict,
+    ) -> list[PWMStep]:
+        """Generate schedule for a step response episode.
+
+        Args:
+            transition: Dict with 'from', 'to', 'settle', 'observe' keys
+                - from: Dict of {pwm2: val, pwm4: val, pwm5: val} percentages
+                - to: Dict of {pwm2: val, pwm4: val, pwm5: val} percentages
+                - settle: Seconds to hold at 'from' level before step
+                - observe: Seconds to observe after step to 'to' level
+
+        Returns:
+            List of PWMStep objects
+        """
+        steps = []
+
+        # Convert percentages to 0-255 scale
+        from_pwm = {
+            k: self._apply_stall_check(k, int(round(v * 255 / 100)))
+            for k, v in transition["from"].items()
+        }
+        to_pwm = {
+            k: self._apply_stall_check(k, int(round(v * 255 / 100)))
+            for k, v in transition["to"].items()
+        }
+
+        # Start at 'from' level
+        steps.append(PWMStep(time_offset=0.0, pwm_values=from_pwm))
+
+        # Step to 'to' level after settle time
+        settle_time = transition["settle"]
+        steps.append(PWMStep(time_offset=settle_time, pwm_values=to_pwm))
+
+        return steps
+
+    def generate_prbs(
+        self,
+        duration: float,
+        level_low: dict,
+        level_high: dict,
+        hold_times: list[int],
+        seed: int,
+    ) -> list[PWMStep]:
+        """Generate PRBS (Pseudo-Random Binary Sequence) schedule.
+
+        Args:
+            duration: Total episode duration in seconds
+            level_low: Low PWM state {pwm2: val, ...} in percentages
+            level_high: High PWM state {pwm2: val, ...} in percentages
+            hold_times: List of possible hold durations to randomly select from
+            seed: Random seed for reproducibility
+
+        Returns:
+            List of PWMStep objects with alternating levels
+        """
+        rng = np.random.default_rng(seed)
+        steps = []
+
+        # Convert percentages to 0-255 scale
+        low_pwm = {
+            k: self._apply_stall_check(k, int(round(v * 255 / 100)))
+            for k, v in level_low.items()
+        }
+        high_pwm = {
+            k: self._apply_stall_check(k, int(round(v * 255 / 100)))
+            for k, v in level_high.items()
+        }
+
+        t = 0.0
+        current_level = "low"
+        steps.append(PWMStep(time_offset=0.0, pwm_values=low_pwm))
+
+        while t < duration:
+            hold = int(rng.choice(hold_times))
+            t += hold
+            if t >= duration:
+                break
+
+            # Toggle level
+            if current_level == "low":
+                steps.append(PWMStep(time_offset=t, pwm_values=high_pwm))
+                current_level = "high"
+            else:
+                steps.append(PWMStep(time_offset=t, pwm_values=low_pwm))
+                current_level = "low"
+
+        return steps
+
+    def generate_staircase(
+        self,
+        levels: list[int],
+        hold_per_step: float,
+        fan_scale: dict,
+    ) -> list[PWMStep]:
+        """Generate staircase schedule for nonlinearity identification.
+
+        Args:
+            levels: List of PWM percentages to step through (e.g., [20, 40, 60, 80, 100, 80, 60, 40, 20])
+            hold_per_step: Seconds to hold at each level
+            fan_scale: Dict of {pwm2: scale, ...} where scale is 0.0-1.0 multiplier
+
+        Returns:
+            List of PWMStep objects stepping through levels
+        """
+        steps = []
+        t = 0.0
+
+        for level in levels:
+            # Apply fan scaling and convert to 0-255
+            pwm_values = {}
+            for device_key, scale in fan_scale.items():
+                pct = level * scale
+                pwm_val = int(round(pct * 255 / 100))
+                pwm_values[device_key] = self._apply_stall_check(device_key, pwm_val)
+
+            steps.append(PWMStep(time_offset=t, pwm_values=pwm_values))
+            t += hold_per_step
+
+        return steps
+
 
 class EpisodeCollector:
     """Collect time-series episodes for MPC model training."""
@@ -199,11 +321,16 @@ class EpisodeCollector:
         self.episode_duration = self.data_config["episode_duration"]
         self.sampling_seed = self.data_config["sampling_seed"]
 
-        # Parse episode types
-        self.episode_types: list[EpisodeType] = [
-            EpisodeType(mode=et["mode"], repeats_per_load=et["repeats_per_load"])
-            for et in self.data_config["episode_types"]
-        ]
+        # Parse episode types (skip disabled ones)
+        self.episode_types: list[EpisodeType] = []
+        for et in self.data_config["episode_types"]:
+            if not et.get("enabled", True):
+                continue
+            mode = et["mode"]
+            repeats = et.get("repeats_per_load", 1)
+            # Store full config for new episode types
+            config = {k: v for k, v in et.items() if k not in ("mode", "repeats_per_load", "enabled")}
+            self.episode_types.append(EpisodeType(mode=mode, repeats_per_load=repeats, config=config))
 
         # Device keys for generating fan combinations
         self.device_keys = list(self.devices.keys())
@@ -413,6 +540,109 @@ class EpisodeCollector:
 
         return episode, samples
 
+    def run_scheduled_episode(
+        self,
+        load_config: dict,
+        episode_id: str,
+        schedule: list[PWMStep],
+        total_duration: float,
+    ) -> tuple[Episode, list[TimeSeriesSample]]:
+        """Run an episode with a pre-generated PWM schedule.
+
+        Used for step_response, prbs, and staircase episodes.
+
+        Args:
+            load_config: Load configuration dict
+            episode_id: Unique episode identifier
+            schedule: Pre-generated list of PWMStep objects
+            total_duration: Total episode duration in seconds
+
+        Returns:
+            Tuple of (Episode metadata, list of samples)
+        """
+        samples: list[TimeSeriesSample] = []
+        start_time = time.time()
+        current_step_idx = 0
+        sample_index = 0
+        aborted = False
+        abort_reason: Optional[str] = None
+
+        # Apply initial PWM
+        self._apply_pwm(schedule[0].pwm_values)
+
+        # Progress bar for episode
+        expected_samples = int(total_duration / self.sample_interval)
+        with tqdm(
+            total=expected_samples,
+            desc=f"Episode {episode_id[:30]}",
+            unit="sample",
+            leave=False,
+            bar_format="{desc}: {percentage:3.0f}% |{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+        ) as pbar:
+            while (elapsed := time.time() - start_time) < total_duration:
+                loop_start = time.time()
+
+                # Check for scheduled PWM step
+                if (
+                    current_step_idx + 1 < len(schedule)
+                    and elapsed >= schedule[current_step_idx + 1].time_offset
+                ):
+                    current_step_idx += 1
+                    self._apply_pwm(schedule[current_step_idx].pwm_values)
+                    pwm_str = ", ".join(
+                        f"{k}={int(v * 100 / 255)}%"
+                        for k, v in schedule[current_step_idx].pwm_values.items()
+                    )
+                    tqdm.write(f"  PWM step at {elapsed:.1f}s: {pwm_str}")
+
+                # Safety check
+                try:
+                    self.safety.check_safety()
+                except AbortPointError as e:
+                    tqdm.write(f"\nABORT: {e}")
+                    tqdm.write(
+                        f"  Setting fans to full speed and cooling for {self.safety.abort_cooldown_time}s..."
+                    )
+                    self.safety._apply_abort_speeds()
+                    time.sleep(self.safety.abort_cooldown_time)
+                    aborted = True
+                    abort_reason = str(e)
+                    break
+
+                # Sample immediately
+                sample = self._collect_sample(
+                    episode_id,
+                    sample_index,
+                    schedule[current_step_idx].pwm_values,
+                    load_config,
+                )
+                samples.append(sample)
+                sample_index += 1
+                pbar.update(1)
+
+                # Update status
+                pbar.set_postfix_str(
+                    f"CPU:{sample.T_cpu:.1f}C GPU:{sample.T_gpu:.1f}C"
+                )
+
+                # Maintain sample rate
+                sleep_time = max(0, self.sample_interval - (time.time() - loop_start))
+                time.sleep(sleep_time)
+
+        end_time = time.time()
+
+        episode = Episode(
+            episode_id=episode_id,
+            start_timestamp=start_time,
+            end_timestamp=end_time,
+            load_description=load_config["description"],
+            num_samples=len(samples),
+            aborted=aborted,
+            abort_reason=abort_reason,
+        )
+
+        return episode, samples
+
     def _get_fan_combinations(self, mode: str) -> list[list[str]]:
         """Get fan combinations for an episode type.
 
@@ -434,12 +664,36 @@ class EpisodeCollector:
             # All fans vary together
             return [self.device_keys]
 
-    def _calculate_total_episodes(self, num_loads: int) -> int:
+    def _calculate_total_episodes(self, load_levels: list[dict]) -> int:
         """Calculate total episodes across all types and loads."""
         total = 0
+        load_descriptions = [ld["description"] for ld in load_levels]
+
         for et in self.episode_types:
-            combinations = self._get_fan_combinations(et.mode)
-            total += len(combinations) * et.repeats_per_load * num_loads
+            if et.mode in ("single_isolation", "pair_isolation", "full_sequential"):
+                # Old episode types run on all loads
+                combinations = self._get_fan_combinations(et.mode)
+                total += len(combinations) * et.repeats_per_load * len(load_levels)
+
+            elif et.mode == "step_response":
+                # step_response runs specific transitions on target loads
+                target_loads = et.config.get("target_loads", load_descriptions)
+                transitions = et.config.get("transitions", [])
+                matching_loads = [tl for tl in target_loads if tl in load_descriptions]
+                total += len(matching_loads) * len(transitions)
+
+            elif et.mode == "prbs":
+                # prbs runs one long episode per target load
+                target_loads = et.config.get("target_loads", load_descriptions)
+                matching_loads = [tl for tl in target_loads if tl in load_descriptions]
+                total += len(matching_loads)
+
+            elif et.mode == "staircase":
+                # staircase runs one episode per target load
+                target_loads = et.config.get("target_loads", load_descriptions)
+                matching_loads = [tl for tl in target_loads if tl in load_descriptions]
+                total += len(matching_loads)
+
         return total
 
     def run_collection(self, output_path: Path) -> None:
@@ -449,27 +703,33 @@ class EpisodeCollector:
             output_path: Path to output CSV file
         """
         load_levels = self.data_config["load_levels"]
-        total_episodes = self._calculate_total_episodes(len(load_levels))
-
-        # Calculate episodes per load for display
-        episodes_per_load = sum(
-            len(self._get_fan_combinations(et.mode)) * et.repeats_per_load
-            for et in self.episode_types
-        )
+        load_descriptions = [ld["description"] for ld in load_levels]
+        total_episodes = self._calculate_total_episodes(load_levels)
 
         print("\n" + "=" * 80)
         print("STARTING TIME-SERIES DATA COLLECTION")
         print("=" * 80)
-        print(f"Episode duration: {self.episode_duration}s")
+        print(f"Default episode duration: {self.episode_duration}s")
         print(f"Episode types: {len(self.episode_types)}")
         for et in self.episode_types:
-            combos = len(self._get_fan_combinations(et.mode))
-            print(f"  - {et.mode}: {et.repeats_per_load} repeats × {combos} combinations")
-        print(f"Episodes per load: {episodes_per_load}")
+            if et.mode in ("single_isolation", "pair_isolation", "full_sequential"):
+                combos = len(self._get_fan_combinations(et.mode))
+                print(f"  - {et.mode}: {et.repeats_per_load} repeats × {combos} combinations (all loads)")
+            elif et.mode == "step_response":
+                transitions = len(et.config.get("transitions", []))
+                target_loads = et.config.get("target_loads", [])
+                print(f"  - {et.mode}: {transitions} transitions × {len(target_loads)} loads")
+            elif et.mode == "prbs":
+                duration = et.config.get("duration", 600)
+                target_loads = et.config.get("target_loads", [])
+                print(f"  - {et.mode}: {duration}s episodes × {len(target_loads)} loads")
+            elif et.mode == "staircase":
+                levels = len(et.config.get("levels", []))
+                target_loads = et.config.get("target_loads", [])
+                print(f"  - {et.mode}: {levels} levels × {len(target_loads)} loads")
         print(f"Load levels: {len(load_levels)}")
         print(f"Total episodes: {total_episodes}")
         print(f"Sample interval: {self.sample_interval}s")
-        print(f"Expected samples per episode: ~{int(self.episode_duration / self.sample_interval)}")
 
         with tqdm(
             total=total_episodes,
@@ -493,41 +753,153 @@ class EpisodeCollector:
                     load["cpu_load"], load["gpu_load"]
                 ):
                     tqdm.write(f"Failed to set load for: {description}")
-                    main_pbar.update(episodes_per_load)
+                    # Skip appropriate number of episodes
+                    for et in self.episode_types:
+                        if et.mode in ("single_isolation", "pair_isolation", "full_sequential"):
+                            main_pbar.update(len(self._get_fan_combinations(et.mode)) * et.repeats_per_load)
+                        elif et.mode == "step_response" and description in et.config.get("target_loads", []):
+                            main_pbar.update(len(et.config.get("transitions", [])))
+                        elif et.mode in ("prbs", "staircase") and description in et.config.get("target_loads", []):
+                            main_pbar.update(1)
                     continue
 
                 # Run episodes for each episode type
                 for et in self.episode_types:
-                    fan_combinations = self._get_fan_combinations(et.mode)
+                    if et.mode in ("single_isolation", "pair_isolation", "full_sequential"):
+                        # Original episode types
+                        fan_combinations = self._get_fan_combinations(et.mode)
 
-                    for varying_fans in fan_combinations:
-                        fans_str = "+".join(varying_fans)
-                        tqdm.write(f"\n  Episode type: {et.mode}, varying: {fans_str}")
+                        for varying_fans in fan_combinations:
+                            fans_str = "+".join(varying_fans)
+                            tqdm.write(f"\n  Episode type: {et.mode}, varying: {fans_str}")
 
-                        for rep in range(et.repeats_per_load):
-                            episode_id = f"{description}_{et.mode}_{fans_str}_{rep}_{int(time.time())}"
-                            seed = self.sampling_seed + self._episode_counter
-                            self._episode_counter += 1
+                            for rep in range(et.repeats_per_load):
+                                episode_id = f"{description}_{et.mode}_{fans_str}_{rep}_{int(time.time())}"
+                                seed = self.sampling_seed + self._episode_counter
+                                self._episode_counter += 1
 
-                            tqdm.write(
-                                f"    Starting episode {rep + 1}/{et.repeats_per_load}: {episode_id}"
-                            )
+                                tqdm.write(
+                                    f"    Starting episode {rep + 1}/{et.repeats_per_load}: {episode_id}"
+                                )
 
-                            episode, samples = self.run_episode(
-                                load, episode_id, seed, et.mode, varying_fans
+                                episode, samples = self.run_episode(
+                                    load, episode_id, seed, et.mode, varying_fans
+                                )
+                                self.episodes.append(episode)
+                                self.samples.extend(samples)
+
+                                # Incremental save
+                                self.save_samples(output_path)
+                                main_pbar.update(1)
+
+                                if episode.aborted:
+                                    tqdm.write(f"    Episode aborted: {episode.abort_reason}")
+
+                    elif et.mode == "step_response":
+                        # Step response episodes - only for target loads
+                        target_loads = et.config.get("target_loads", load_descriptions)
+                        if description not in target_loads:
+                            continue
+
+                        transitions = et.config.get("transitions", [])
+                        tqdm.write(f"\n  Episode type: {et.mode} ({len(transitions)} transitions)")
+
+                        for t_idx, transition in enumerate(transitions):
+                            from_pwm = transition["from"]
+                            to_pwm = transition["to"]
+                            settle = transition["settle"]
+                            observe = transition["observe"]
+                            total_duration = settle + observe
+
+                            # Create descriptive episode ID
+                            from_str = f"pwm{int(sum(from_pwm.values()) / len(from_pwm))}"
+                            to_str = f"pwm{int(sum(to_pwm.values()) / len(to_pwm))}"
+                            episode_id = f"{description}_step_{from_str}_to_{to_str}_{int(time.time())}"
+
+                            tqdm.write(f"    Transition {t_idx + 1}/{len(transitions)}: {from_str} → {to_str} (settle={settle}s, observe={observe}s)")
+
+                            # Generate schedule
+                            schedule = self.schedule_generator.generate_step_response(transition)
+
+                            episode, samples = self.run_scheduled_episode(
+                                load, episode_id, schedule, total_duration
                             )
                             self.episodes.append(episode)
                             self.samples.extend(samples)
 
-                            # Incremental save
                             self.save_samples(output_path)
-
                             main_pbar.update(1)
 
                             if episode.aborted:
-                                tqdm.write(
-                                    f"    Episode aborted: {episode.abort_reason}"
-                                )
+                                tqdm.write(f"    Episode aborted: {episode.abort_reason}")
+
+                    elif et.mode == "prbs":
+                        # PRBS episodes - only for target loads
+                        target_loads = et.config.get("target_loads", load_descriptions)
+                        if description not in target_loads:
+                            continue
+
+                        duration = et.config.get("duration", 600)
+                        level_low = et.config.get("level_low", {"pwm2": 25, "pwm4": 0, "pwm5": 0})
+                        level_high = et.config.get("level_high", {"pwm2": 100, "pwm4": 80, "pwm5": 100})
+                        hold_times = et.config.get("hold_times", [10, 15, 20, 30, 45])
+
+                        episode_id = f"{description}_prbs_{int(time.time())}"
+                        seed = self.sampling_seed + self._episode_counter
+                        self._episode_counter += 1
+
+                        tqdm.write(f"\n  Episode type: {et.mode} (duration={duration}s)")
+                        tqdm.write(f"    Starting PRBS episode: {episode_id}")
+
+                        # Generate schedule
+                        schedule = self.schedule_generator.generate_prbs(
+                            duration, level_low, level_high, hold_times, seed
+                        )
+
+                        episode, samples = self.run_scheduled_episode(
+                            load, episode_id, schedule, duration
+                        )
+                        self.episodes.append(episode)
+                        self.samples.extend(samples)
+
+                        self.save_samples(output_path)
+                        main_pbar.update(1)
+
+                        if episode.aborted:
+                            tqdm.write(f"    Episode aborted: {episode.abort_reason}")
+
+                    elif et.mode == "staircase":
+                        # Staircase episodes - only for target loads
+                        target_loads = et.config.get("target_loads", load_descriptions)
+                        if description not in target_loads:
+                            continue
+
+                        levels = et.config.get("levels", [20, 40, 60, 80, 100, 80, 60, 40, 20])
+                        hold_per_step = et.config.get("hold_per_step", 45)
+                        fan_scale = et.config.get("fan_scale", {"pwm2": 1.0, "pwm4": 0.8, "pwm5": 1.0})
+                        total_duration = len(levels) * hold_per_step
+
+                        episode_id = f"{description}_staircase_{int(time.time())}"
+
+                        tqdm.write(f"\n  Episode type: {et.mode} ({len(levels)} levels × {hold_per_step}s = {total_duration}s)")
+                        tqdm.write(f"    Starting staircase episode: {episode_id}")
+
+                        # Generate schedule
+                        schedule = self.schedule_generator.generate_staircase(
+                            levels, hold_per_step, fan_scale
+                        )
+
+                        episode, samples = self.run_scheduled_episode(
+                            load, episode_id, schedule, total_duration
+                        )
+                        self.episodes.append(episode)
+                        self.samples.extend(samples)
+
+                        self.save_samples(output_path)
+                        main_pbar.update(1)
+
+                        if episode.aborted:
+                            tqdm.write(f"    Episode aborted: {episode.abort_reason}")
 
         # Final summary
         print("\n" + "=" * 80)

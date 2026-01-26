@@ -75,6 +75,7 @@ class DynamicThermalModel(ABC):
         PWM: np.ndarray,
         P: np.ndarray,
         T_amb: float,
+        extra_features: Optional[Dict[str, float]] = None,
     ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
         """
         Predict next-step temperatures given current state.
@@ -84,6 +85,7 @@ class DynamicThermalModel(ABC):
             PWM: Fan PWM values [pwm2, pwm4, pwm5] shape (3,) or (n, 3)
             P: Power draw [P_cpu, P_gpu] shape (2,) or (n, 2)
             T_amb: Ambient temperature (scalar or array)
+            extra_features: Optional dict of additional features (e.g., cpu_busy_pct)
 
         Returns:
             Tuple of:

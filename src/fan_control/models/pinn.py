@@ -458,8 +458,13 @@ class PINNModel(DynamicThermalModel):
         PWM: np.ndarray,
         P: np.ndarray,
         T_amb: float,
+        extra_features: Optional[Dict[str, float]] = None,
     ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-        """Predict next temperatures using PINN."""
+        """Predict next temperatures using PINN.
+
+        Note: extra_features is currently ignored by PINN model.
+        """
+        del extra_features  # Not yet implemented for PINN
         if self.lightning_model is None:
             raise RuntimeError("Model not trained")
 

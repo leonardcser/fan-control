@@ -10,8 +10,8 @@ stages:
       nfiles: 1
     - path: src/fan_control/pipeline/preprocess.py
       hash: md5
-      md5: f788fbda62214be03bf8113b27442cb2
-      size: 17741
+      md5: 283e27239f49fe3e17ec7213465073c3
+      size: 18380
     params:
       params.yaml:
         preprocess:
@@ -25,24 +25,24 @@ stages:
     outs:
     - path: data/processed
       hash: md5
-      md5: a6b06759d708156abd203941343be835.dir
-      size: 21593123
+      md5: 816efdacd21a3a60ac13077a84aed310.dir
+      size: 22580324
       nfiles: 11
   train:
     cmd: python -m fan_control.pipeline.train
     deps:
     - path: data/processed/train.csv
       hash: md5
-      md5: 7c2a1408a520510bec359da528862f3f
-      size: 14261323
+      md5: 1f37f3851073a87acfbf7f11add916a4
+      size: 15048215
     - path: data/processed/val.csv
       hash: md5
-      md5: 74861f1dc3c653649bb49126987306d2
-      size: 3545623
+      md5: 15921402bff05b4ec353b31adff829bd
+      size: 3745932
     - path: src/fan_control/models/
       hash: md5
-      md5: 61c209b9347c3a7905ea39c11cfa8f75.dir
-      size: 149495
+      md5: 2f18f35fe99b882775d300cc33292912.dir
+      size: 153082
       nfiles: 12
     - path: src/fan_control/pipeline/train.py
       hash: md5
@@ -62,22 +62,17 @@ stages:
           - P_cpu
           - P_gpu
           - T_amb
+          - cpu_busy_pct
           targets:
           - T_cpu
           - T_gpu
-        model.physics:
-          dt: 1.0
-          C_cpu: 100.0
-          C_gpu: 80.0
-          G_cpu_base: 1.0
-          G_gpu_base: 0.8
-          G_cpu_pwm2: 0.05
-          G_cpu_pwm4: 0.02
-          G_cpu_pwm5: 0.02
-          G_gpu_pwm2: 0.01
-          G_gpu_pwm4: 0.03
-          G_gpu_pwm5: 0.04
-        model.type: physics
+        model.gbr:
+          n_estimators: 100
+          max_depth: 4
+          learning_rate: 0.1
+          l2_regularization: 1.0
+          random_state: 42
+        model.type: gbr
     outs:
     - path: out/train/logs
       hash: md5
@@ -86,29 +81,29 @@ stages:
       nfiles: 0
     - path: out/train/metrics.json
       hash: md5
-      md5: 08ea03d424b5683e37503f5976907be1
-      size: 226
-    - path: out/train/models/physics/
+      md5: e08bf3eb206066e373aca9b22a235fb2
+      size: 253
+    - path: out/train/models/gbr/
       hash: md5
-      md5: 0c4e394189e4ff6c0d04b7f18ac2c8b1.dir
-      size: 1552
-      nfiles: 1
+      md5: e913e7fcff001f8fa9fed4248e5ed245.dir
+      size: 365692
+      nfiles: 3
   evaluate:
     cmd: python -m fan_control.pipeline.evaluate
     deps:
     - path: data/processed/val.csv
       hash: md5
-      md5: 74861f1dc3c653649bb49126987306d2
-      size: 3545623
-    - path: out/train/models/physics/
+      md5: 15921402bff05b4ec353b31adff829bd
+      size: 3745932
+    - path: out/train/models/gbr/
       hash: md5
-      md5: 0c4e394189e4ff6c0d04b7f18ac2c8b1.dir
-      size: 1552
-      nfiles: 1
+      md5: e913e7fcff001f8fa9fed4248e5ed245.dir
+      size: 365692
+      nfiles: 3
     - path: src/fan_control/models/
       hash: md5
-      md5: 61c209b9347c3a7905ea39c11cfa8f75.dir
-      size: 149495
+      md5: 2f18f35fe99b882775d300cc33292912.dir
+      size: 153082
       nfiles: 12
     - path: src/fan_control/pipeline/evaluate.py
       hash: md5
@@ -120,14 +115,14 @@ stages:
         - 10
         - 20
         - 50
-        model.type: physics
+        model.type: gbr
     outs:
     - path: out/evaluate/metrics.json
       hash: md5
-      md5: 3c55bb477d0a47d98d0d1baa22283f05
-      size: 1825
+      md5: 0ae51ccad74da895e9d0f14cbbf14674
+      size: 1826
     - path: out/evaluate/plots
       hash: md5
-      md5: fd6555ed5db7e721b374b1515c654f38.dir
-      size: 530980
+      md5: 0f30c32ddb2069cbe43129aec6b2001e.dir
+      size: 520563
       nfiles: 5

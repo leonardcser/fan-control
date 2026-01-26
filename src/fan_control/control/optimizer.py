@@ -282,6 +282,11 @@ class Optimizer:
         )
         T_amb = current_state.get("T_amb", 25.0)
 
+        # Extract extra features for models that support them (e.g., GBR with cpu_busy_pct)
+        extra_features = {}
+        if "cpu_busy_pct" in current_state:
+            extra_features["cpu_busy_pct"] = current_state["cpu_busy_pct"]
+
         logger.debug(f"MPC input: P=[{P[0]:.1f}, {P[1]:.1f}]W, T_amb={T_amb:.1f}°C")
 
         cache = {}
@@ -313,7 +318,9 @@ class Optimizer:
 
                 for k in range(prediction_horizon):
                     PWM = U_full[k]
-                    T_curr, _ = self.model.predict_next(T_curr, PWM, P, T_amb)
+                    T_curr, _ = self.model.predict_next(
+                        T_curr, PWM, P, T_amb, extra_features
+                    )
                     traj[k + 1] = T_curr
 
                 cache[key] = traj

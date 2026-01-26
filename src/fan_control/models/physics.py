@@ -254,8 +254,13 @@ class PhysicsModel(DynamicThermalModel):
         PWM: np.ndarray,
         P: np.ndarray,
         T_amb: float,
+        extra_features: Optional[Dict[str, float]] = None,
     ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-        """Predict next temperatures using RC model."""
+        """Predict next temperatures using RC model.
+
+        Note: extra_features is ignored by physics model (uses fixed equations).
+        """
+        del extra_features  # Unused in physics model
         # Compute effective conductances
         G_cpu = self._compute_G_eff(PWM[0], PWM[1], PWM[2], is_cpu=True)
         G_gpu = self._compute_G_eff(PWM[0], PWM[1], PWM[2], is_cpu=False)

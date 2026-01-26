@@ -13,7 +13,7 @@ preprocess:
 
 # Model Configuration
 model:
-  type: physics # physics | pinn | gbr | gp
+  type: gbr # physics | pinn | gbr | gp
 
   # Feature configuration (shared across models)
   features:
@@ -28,6 +28,7 @@ model:
       - P_cpu
       - P_gpu
       - T_amb
+      - cpu_busy_pct  # Throttling indicator: low % at high temp = throttled
     targets:
       - T_cpu
       - T_gpu
