@@ -13,7 +13,8 @@ stages:
   train:
     cmd: python -m fan_control.pipeline.train
     deps:
-      - data/processed
+      - data/processed/train.csv
+      - data/processed/val.csv
       - src/fan_control/pipeline/train.py
       - src/fan_control/models/
     params:
@@ -21,21 +22,22 @@ stages:
       - model.features
       - model.${model.type}
     outs:
-      - out/models/${model.type}/
+      - out/train/models/${model.type}/
+      - out/train/logs
     metrics:
-      - out/metrics/train_metrics.json:
-          cache: false
+      - out/train/metrics.json
 
   evaluate:
     cmd: python -m fan_control.pipeline.evaluate
     deps:
       - data/processed/val.csv
-      - out/models/${model.type}/
+      - out/train/models/${model.type}/
       - src/fan_control/pipeline/evaluate.py
       - src/fan_control/models/
     params:
       - model.type
       - evaluate.horizons
+    outs:
+      - out/evaluate/plots
     metrics:
-      - out/metrics/val_metrics.json:
-          cache: false
+      - out/evaluate/metrics.json

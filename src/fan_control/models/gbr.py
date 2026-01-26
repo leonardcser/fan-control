@@ -110,16 +110,20 @@ class GradientBoostingModel(DynamicThermalModel):
 
         return X, y_cpu, y_gpu
 
-    def train(self, df: pd.DataFrame) -> Dict[str, float]:
+    def train(
+        self, df: pd.DataFrame, val_df: Optional[pd.DataFrame] = None
+    ) -> Dict[str, float]:
         """
         Train GBR models for CPU and GPU temperature prediction.
 
         Args:
             df: Training dataframe with temperature/power/PWM columns
+            val_df: Unused, for API compatibility
 
         Returns:
             Dict of training metrics
         """
+        del val_df  # Unused
         # Determine available features
         available = [f for f in self.input_features if f in df.columns]
         self.feature_names_in_ = available

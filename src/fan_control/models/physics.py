@@ -150,13 +150,20 @@ class PhysicsModel(DynamicThermalModel):
         dT_dt = (P - G_eff * (T - T_amb)) / C
         return T + self.dt * dT_dt
 
-    def train(self, df: pd.DataFrame) -> Dict[str, float]:
+    def train(
+        self, df: pd.DataFrame, val_df: Optional[pd.DataFrame] = None
+    ) -> Dict[str, float]:
         """
         Train by fitting thermal parameters to minimize prediction error.
 
         Uses scipy.optimize to find parameters that best fit the observed
         temperature dynamics.
+
+        Args:
+            df: Training dataframe
+            val_df: Unused, for API compatibility
         """
+        del val_df  # Unused
         # Prepare data - need consecutive time steps
         if "T_cpu_next" not in df.columns:
             df = df.copy()

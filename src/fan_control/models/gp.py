@@ -134,8 +134,16 @@ class GaussianProcessModel(DynamicThermalModel):
 
         return model, likelihood
 
-    def train(self, df: pd.DataFrame) -> Dict[str, float]:
-        """Train GP models for CPU and GPU."""
+    def train(
+        self, df: pd.DataFrame, val_df: Optional[pd.DataFrame] = None
+    ) -> Dict[str, float]:
+        """Train GP models for CPU and GPU.
+
+        Args:
+            df: Training dataframe
+            val_df: Unused, for API compatibility
+        """
+        del val_df  # Unused
         # Prepare data
         if "T_cpu_next" not in df.columns:
             df = df.copy()

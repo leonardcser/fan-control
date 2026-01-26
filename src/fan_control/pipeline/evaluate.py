@@ -6,9 +6,14 @@ Evaluates model with unified metrics: single-step, rollout, physics checks.
 import json
 import logging
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple, Optional
 
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 import pandas as pd
 import yaml
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
@@ -22,11 +27,16 @@ logging.basicConfig(
 )
 
 
-def evaluate_single_step(model, df: pd.DataFrame) -> Dict[str, float]:
+def evaluate_single_step(
+    model, df: pd.DataFrame
+) -> Tuple[Dict[str, float], Dict[str, np.ndarray]]:
     """
     Evaluate single-step prediction accuracy.
 
-    Returns RMSE, MAE, R² for CPU and GPU predictions.
+    Returns:
+        Tuple of (metrics dict, predictions dict)
+        - metrics: RMSE, MAE, R² for CPU and GPU predictions.
+        - predictions: actual and predicted values for plotting.
     """
     # Prepare targets
     if "T_cpu_next" not in df.columns:
@@ -55,7 +65,7 @@ def evaluate_single_step(model, df: pd.DataFrame) -> Dict[str, float]:
     y_cpu_pred = np.array(y_cpu_pred)
     y_gpu_pred = np.array(y_gpu_pred)
 
-    return {
+    metrics = {
         "cpu_rmse": float(np.sqrt(mean_squared_error(y_cpu_true, y_cpu_pred))),
         "cpu_mae": float(mean_absolute_error(y_cpu_true, y_cpu_pred)),
         "cpu_r2": float(r2_score(y_cpu_true, y_cpu_pred)),
@@ -64,16 +74,31 @@ def evaluate_single_step(model, df: pd.DataFrame) -> Dict[str, float]:
         "gpu_r2": float(r2_score(y_gpu_true, y_gpu_pred)),
     }
 
+    predictions = {
+        "cpu_true": y_cpu_true,
+        "cpu_pred": y_cpu_pred,
+        "gpu_true": y_gpu_true,
+        "gpu_pred": y_gpu_pred,
+    }
+
+    return metrics, predictions
+
 
 def evaluate_rollout(
     model, df: pd.DataFrame, horizons: List[int]
-) -> Dict[str, Dict[str, float]]:
+) -> Tuple[Dict[str, Dict[str, float]], Dict[int, Dict[str, np.ndarray]]]:
     """
     Evaluate multi-step rollout accuracy at different horizons.
 
     Starts from random initial states and rolls forward.
+
+    Returns:
+        Tuple of (metrics dict, errors dict)
+        - metrics: RMSE and MAE at each horizon.
+        - errors: raw error arrays for each horizon for plotting.
     """
     results = {}
+    all_errors = {}
 
     for horizon in horizons:
         cpu_errors = []
@@ -121,7 +146,12 @@ def evaluate_rollout(
             "gpu_mae": float(np.mean(np.abs(gpu_errors))),
         }
 
-    return results
+        all_errors[horizon] = {
+            "cpu_errors": cpu_errors,
+            "gpu_errors": gpu_errors,
+        }
+
+    return results, all_errors
 
 
 def evaluate_physics_consistency(model, T_amb: float = 25.0) -> Dict[str, Any]:
@@ -196,11 +226,18 @@ def evaluate_physics_consistency(model, T_amb: float = 25.0) -> Dict[str, Any]:
     }
 
 
-def evaluate_uncertainty(model, df: pd.DataFrame) -> Dict[str, float]:
+def evaluate_uncertainty(
+    model, df: pd.DataFrame
+) -> Tuple[Dict[str, float], Optional[Dict[str, np.ndarray]]]:
     """
     Evaluate uncertainty calibration (for GP model).
 
     Checks if predicted uncertainty correlates with actual error.
+
+    Returns:
+        Tuple of (metrics dict, uncertainty data dict or None)
+        - metrics: calibration metrics.
+        - data: errors and uncertainties arrays for plotting (None if no uncertainty).
     """
     if "T_cpu_next" not in df.columns:
         df = df.copy()
@@ -225,7 +262,7 @@ def evaluate_uncertainty(model, df: pd.DataFrame) -> Dict[str, float]:
             uncertainties.append(std[0])
 
     if not errors:
-        return {"has_uncertainty": False}
+        return {"has_uncertainty": False}, None
 
     errors = np.array(errors)
     uncertainties = np.array(uncertainties)
@@ -237,13 +274,334 @@ def evaluate_uncertainty(model, df: pd.DataFrame) -> Dict[str, float]:
     # Correlation between uncertainty and error
     correlation = np.corrcoef(errors, uncertainties)[0, 1]
 
-    return {
+    metrics = {
         "has_uncertainty": True,
         "within_1_std": float(within_1_std),
         "within_2_std": float(within_2_std),
         "error_uncertainty_corr": float(correlation) if not np.isnan(correlation) else 0.0,
         "mean_uncertainty": float(np.mean(uncertainties)),
     }
+
+    data = {
+        "errors": errors,
+        "uncertainties": uncertainties,
+    }
+
+    return metrics, data
+
+
+def plot_predicted_vs_actual(
+    predictions: Dict[str, np.ndarray],
+    metrics: Dict[str, float],
+    output_dir: Path,
+) -> None:
+    """Plot predicted vs actual temperature scatter plots."""
+    _, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    for idx, (component, label) in enumerate([("cpu", "CPU"), ("gpu", "GPU")]):
+        ax = axes[idx]
+        y_true = predictions[f"{component}_true"]
+        y_pred = predictions[f"{component}_pred"]
+
+        # Scatter plot with seaborn
+        sns.scatterplot(x=y_true, y=y_pred, alpha=0.3, s=10, color="steelblue", ax=ax)
+
+        # Perfect prediction line
+        min_val = min(y_true.min(), y_pred.min())
+        max_val = max(y_true.max(), y_pred.max())
+        ax.plot([min_val, max_val], [min_val, max_val], "r--", linewidth=2, label="Perfect")
+
+        # Metrics annotation
+        rmse = metrics[f"{component}_rmse"]
+        r2 = metrics[f"{component}_r2"]
+        mae = metrics[f"{component}_mae"]
+        ax.text(
+            0.05,
+            0.95,
+            f"RMSE: {rmse:.3f}°C\nMAE: {mae:.3f}°C\nR²: {r2:.4f}",
+            transform=ax.transAxes,
+            fontsize=10,
+            verticalalignment="top",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+        )
+
+        ax.set_xlabel("Actual Temperature (°C)")
+        ax.set_ylabel("Predicted Temperature (°C)")
+        ax.set_title(f"{label} Temperature: Predicted vs Actual")
+        ax.legend(loc="lower right")
+        ax.grid(True, alpha=0.3)
+        ax.set_aspect("equal", adjustable="box")
+
+    plt.tight_layout()
+    plt.savefig(output_dir / "predicted_vs_actual.png", dpi=150)
+    plt.close()
+    logger.info(f"Saved predicted vs actual plot to {output_dir / 'predicted_vs_actual.png'}")
+
+
+def plot_residual_distribution(
+    predictions: Dict[str, np.ndarray],
+    output_dir: Path,
+) -> None:
+    """Plot residual (error) distributions."""
+    _, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    for idx, (component, label) in enumerate([("cpu", "CPU"), ("gpu", "GPU")]):
+        ax = axes[idx]
+        residuals = predictions[f"{component}_pred"] - predictions[f"{component}_true"]
+
+        # Histogram with KDE using seaborn
+        sns.histplot(residuals, bins=50, stat="density", alpha=0.7, color="steelblue", kde=True, ax=ax)
+
+        # Add normal fit annotation
+        mu, std = residuals.mean(), residuals.std()
+        ax.text(
+            0.95,
+            0.95,
+            f"μ={mu:.3f}, σ={std:.3f}",
+            transform=ax.transAxes,
+            fontsize=10,
+            verticalalignment="top",
+            horizontalalignment="right",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+        )
+
+        ax.axvline(0, color="black", linestyle="--", linewidth=1, alpha=0.7)
+        ax.set_xlabel("Prediction Error (°C)")
+        ax.set_ylabel("Density")
+        ax.set_title(f"{label} Residual Distribution")
+        ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(output_dir / "residual_distribution.png", dpi=150)
+    plt.close()
+    logger.info(f"Saved residual distribution plot to {output_dir / 'residual_distribution.png'}")
+
+
+def plot_rollout_error_vs_horizon(
+    rollout_metrics: Dict[str, Dict[str, float]],
+    horizons: List[int],
+    output_dir: Path,
+) -> None:
+    """Plot RMSE vs prediction horizon."""
+    _, ax = plt.subplots(figsize=(10, 6))
+
+    cpu_rmse = []
+    gpu_rmse = []
+    valid_horizons = []
+
+    for h in horizons:
+        key = f"horizon_{h}"
+        if key in rollout_metrics:
+            cpu_rmse.append(rollout_metrics[key]["cpu_rmse"])
+            gpu_rmse.append(rollout_metrics[key]["gpu_rmse"])
+            valid_horizons.append(h)
+
+    # Prepare data for seaborn
+    plot_df = pd.DataFrame({
+        "Horizon": valid_horizons * 2,
+        "RMSE": cpu_rmse + gpu_rmse,
+        "Component": ["CPU"] * len(valid_horizons) + ["GPU"] * len(valid_horizons),
+    })
+
+    sns.lineplot(data=plot_df, x="Horizon", y="RMSE", hue="Component", marker="o", markersize=8, linewidth=2, ax=ax)
+
+    ax.set_xlabel("Prediction Horizon (steps)")
+    ax.set_ylabel("RMSE (°C)")
+    ax.set_title("Rollout Error vs Prediction Horizon")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.set_xticks(valid_horizons)
+
+    plt.tight_layout()
+    plt.savefig(output_dir / "rollout_error_vs_horizon.png", dpi=150)
+    plt.close()
+    logger.info(f"Saved rollout error plot to {output_dir / 'rollout_error_vs_horizon.png'}")
+
+
+def plot_rollout_error_distribution(
+    rollout_errors: Dict[int, Dict[str, np.ndarray]],
+    output_dir: Path,
+) -> None:
+    """Plot box plots of rollout errors at different horizons."""
+    if not rollout_errors:
+        return
+
+    horizons = sorted(rollout_errors.keys())
+
+    _, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    for idx, (component, label) in enumerate([("cpu", "CPU"), ("gpu", "GPU")]):
+        ax = axes[idx]
+
+        # Prepare data for seaborn boxplot
+        box_data = []
+        for h in horizons:
+            for err in rollout_errors[h][f"{component}_errors"]:
+                box_data.append({"Horizon": str(h), "Error": err})
+
+        box_df = pd.DataFrame(box_data)
+
+        sns.boxplot(data=box_df, x="Horizon", y="Error", color="lightsteelblue", ax=ax)
+
+        ax.axhline(0, color="red", linestyle="--", linewidth=1, alpha=0.7)
+        ax.set_xlabel("Prediction Horizon (steps)")
+        ax.set_ylabel("Prediction Error (°C)")
+        ax.set_title(f"{label} Rollout Error Distribution")
+        ax.grid(True, alpha=0.3, axis="y")
+
+    plt.tight_layout()
+    plt.savefig(output_dir / "rollout_error_distribution.png", dpi=150)
+    plt.close()
+    logger.info(f"Saved rollout error distribution plot to {output_dir / 'rollout_error_distribution.png'}")
+
+
+def plot_physics_monotonicity(
+    physics_details: Dict[str, List[float]],
+    output_dir: Path,
+) -> None:
+    """Plot physics consistency: temperature vs PWM and power."""
+    pwm_levels = [20, 40, 60, 80, 100]
+    power_levels = [50, 100, 150, 200]
+
+    _, axes = plt.subplots(2, 2, figsize=(12, 10))
+
+    # CPU vs PWM
+    ax = axes[0, 0]
+    pwm_df = pd.DataFrame({"PWM": pwm_levels, "Temperature": physics_details["cpu_temps_by_pwm"]})
+    sns.lineplot(data=pwm_df, x="PWM", y="Temperature", marker="o", markersize=8, linewidth=2, color="tab:blue", ax=ax)
+    ax.set_xlabel("PWM (%)")
+    ax.set_ylabel("Predicted Temperature (°C)")
+    ax.set_title("CPU Temperature vs Fan PWM")
+    ax.grid(True, alpha=0.3)
+
+    # GPU vs PWM
+    ax = axes[0, 1]
+    pwm_df = pd.DataFrame({"PWM": pwm_levels, "Temperature": physics_details["gpu_temps_by_pwm"]})
+    sns.lineplot(data=pwm_df, x="PWM", y="Temperature", marker="o", markersize=8, linewidth=2, color="tab:orange", ax=ax)
+    ax.set_xlabel("PWM (%)")
+    ax.set_ylabel("Predicted Temperature (°C)")
+    ax.set_title("GPU Temperature vs Fan PWM")
+    ax.grid(True, alpha=0.3)
+
+    # CPU vs Power
+    ax = axes[1, 0]
+    power_df = pd.DataFrame({"Power": power_levels, "Temperature": physics_details["cpu_temps_by_power"]})
+    sns.lineplot(data=power_df, x="Power", y="Temperature", marker="s", markersize=8, linewidth=2, color="tab:blue", ax=ax)
+    ax.set_xlabel("Power (W)")
+    ax.set_ylabel("Predicted Temperature (°C)")
+    ax.set_title("CPU Temperature vs Power")
+    ax.grid(True, alpha=0.3)
+
+    # GPU vs Power
+    ax = axes[1, 1]
+    power_df = pd.DataFrame({"Power": power_levels, "Temperature": physics_details["gpu_temps_by_power"]})
+    sns.lineplot(data=power_df, x="Power", y="Temperature", marker="s", markersize=8, linewidth=2, color="tab:orange", ax=ax)
+    ax.set_xlabel("Power (W)")
+    ax.set_ylabel("Predicted Temperature (°C)")
+    ax.set_title("GPU Temperature vs Power")
+    ax.grid(True, alpha=0.3)
+
+    plt.suptitle("Physics Consistency: Monotonicity Checks", fontsize=14, y=1.02)
+    plt.tight_layout()
+    plt.savefig(output_dir / "physics_monotonicity.png", dpi=150)
+    plt.close()
+    logger.info(f"Saved physics monotonicity plot to {output_dir / 'physics_monotonicity.png'}")
+
+
+def plot_uncertainty_calibration(
+    uncertainty_data: Dict[str, np.ndarray],
+    uncertainty_metrics: Dict[str, float],
+    output_dir: Path,
+) -> None:
+    """Plot uncertainty calibration: error vs predicted uncertainty."""
+    errors = uncertainty_data["errors"]
+    uncertainties = uncertainty_data["uncertainties"]
+
+    _, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    # Scatter plot: error vs uncertainty
+    ax = axes[0]
+    sns.scatterplot(x=uncertainties, y=errors, alpha=0.3, s=10, color="steelblue", ax=ax)
+    ax.plot([0, uncertainties.max()], [0, uncertainties.max()], "r--", linewidth=2, label="Perfect calibration")
+    ax.plot([0, uncertainties.max()], [0, 2 * uncertainties.max()], "g--", linewidth=1, alpha=0.7, label="2σ bound")
+    ax.set_xlabel("Predicted Uncertainty (σ)")
+    ax.set_ylabel("Actual Error (°C)")
+    ax.set_title("Uncertainty Calibration")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # Calibration summary using seaborn barplot
+    ax = axes[1]
+    calib_df = pd.DataFrame({
+        "Category": ["Within 1σ", "Within 1σ", "Within 2σ", "Within 2σ"],
+        "Type": ["Expected (Normal)", "Actual", "Expected (Normal)", "Actual"],
+        "Value": [0.683, uncertainty_metrics["within_1_std"], 0.954, uncertainty_metrics["within_2_std"]],
+    })
+
+    sns.barplot(data=calib_df, x="Category", y="Value", hue="Type", palette=["lightgray", "steelblue"], ax=ax)
+
+    ax.set_ylabel("Fraction of Samples")
+    ax.set_title("Uncertainty Calibration Summary")
+    ax.legend(title=None)
+    ax.set_ylim(0, 1.1)
+    ax.grid(True, alpha=0.3, axis="y")
+
+    # Add correlation annotation
+    corr = uncertainty_metrics["error_uncertainty_corr"]
+    ax.text(
+        0.95,
+        0.05,
+        f"Error-Uncertainty Corr: {corr:.3f}",
+        transform=ax.transAxes,
+        fontsize=10,
+        verticalalignment="bottom",
+        horizontalalignment="right",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8),
+    )
+
+    plt.tight_layout()
+    plt.savefig(output_dir / "uncertainty_calibration.png", dpi=150)
+    plt.close()
+    logger.info(f"Saved uncertainty calibration plot to {output_dir / 'uncertainty_calibration.png'}")
+
+
+def generate_evaluation_plots(
+    predictions: Dict[str, np.ndarray],
+    single_step_metrics: Dict[str, float],
+    rollout_metrics: Dict[str, Dict[str, float]],
+    rollout_errors: Dict[int, Dict[str, np.ndarray]],
+    physics_results: Dict[str, Any],
+    uncertainty_metrics: Dict[str, float],
+    uncertainty_data: Optional[Dict[str, np.ndarray]],
+    horizons: List[int],
+    output_dir: Path,
+) -> None:
+    """Generate all evaluation plots."""
+    plots_dir = output_dir / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info("Generating evaluation plots...")
+
+    # 1. Predicted vs actual
+    plot_predicted_vs_actual(predictions, single_step_metrics, plots_dir)
+
+    # 2. Residual distribution
+    plot_residual_distribution(predictions, plots_dir)
+
+    # 3. Rollout error vs horizon
+    plot_rollout_error_vs_horizon(rollout_metrics, horizons, plots_dir)
+
+    # 4. Rollout error distribution (box plots)
+    plot_rollout_error_distribution(rollout_errors, plots_dir)
+
+    # 5. Physics monotonicity
+    plot_physics_monotonicity(physics_results["details"], plots_dir)
+
+    # 6. Uncertainty calibration (if available)
+    if uncertainty_data is not None:
+        plot_uncertainty_calibration(uncertainty_data, uncertainty_metrics, plots_dir)
+
+    logger.info(f"All evaluation plots saved to {plots_dir}")
 
 
 if __name__ == "__main__":
@@ -257,9 +615,9 @@ if __name__ == "__main__":
     horizons = eval_config.get("horizons", [10, 20, 50])
 
     data_dir = Path("data/processed")
-    models_dir = Path(f"out/models/{model_type}")
-    metrics_dir = Path("out/metrics")
-    metrics_dir.mkdir(parents=True, exist_ok=True)
+    models_dir = Path("out/train/models") / model_type
+    eval_output_dir = Path("out/evaluate")
+    eval_output_dir.mkdir(parents=True, exist_ok=True)
 
     # Load validation data
     val_path = data_dir / "val.csv"
@@ -286,17 +644,17 @@ if __name__ == "__main__":
 
     # 1. Single-step metrics
     logger.info("Evaluating single-step predictions...")
-    single_step = evaluate_single_step(model, val_df)
+    single_step, predictions = evaluate_single_step(model, val_df)
     metrics["val"]["single_step"] = single_step
-    print(f"\n=== Single-Step Metrics ===")
+    print("\n=== Single-Step Metrics ===")
     print(f"CPU: RMSE={single_step['cpu_rmse']:.2f}°C, R²={single_step['cpu_r2']:.4f}")
     print(f"GPU: RMSE={single_step['gpu_rmse']:.2f}°C, R²={single_step['gpu_r2']:.4f}")
 
     # 2. Rollout metrics
     logger.info(f"Evaluating rollout at horizons {horizons}...")
-    rollout = evaluate_rollout(model, val_df, horizons)
+    rollout, rollout_errors = evaluate_rollout(model, val_df, horizons)
     metrics["val"]["rollout"] = rollout
-    print(f"\n=== Rollout Metrics ===")
+    print("\n=== Rollout Metrics ===")
     for h, h_metrics in rollout.items():
         print(f"{h}: CPU RMSE={h_metrics['cpu_rmse']:.2f}°C, GPU RMSE={h_metrics['gpu_rmse']:.2f}°C")
 
@@ -304,22 +662,35 @@ if __name__ == "__main__":
     logger.info("Checking physics consistency...")
     physics = evaluate_physics_consistency(model)
     metrics["val"]["physics"] = physics
-    print(f"\n=== Physics Consistency ===")
+    print("\n=== Physics Consistency ===")
     print(f"PWM monotonic: CPU={physics['pwm_monotonic']['cpu']}, GPU={physics['pwm_monotonic']['gpu']}")
     print(f"Power monotonic: CPU={physics['power_monotonic']['cpu']}, GPU={physics['power_monotonic']['gpu']}")
 
     # 4. Uncertainty calibration (if available)
     logger.info("Evaluating uncertainty...")
-    uncertainty = evaluate_uncertainty(model, val_df)
+    uncertainty, uncertainty_data = evaluate_uncertainty(model, val_df)
     metrics["val"]["uncertainty"] = uncertainty
     if uncertainty["has_uncertainty"]:
-        print(f"\n=== Uncertainty Calibration ===")
+        print("\n=== Uncertainty Calibration ===")
         print(f"Within 1σ: {uncertainty['within_1_std']:.1%}")
         print(f"Within 2σ: {uncertainty['within_2_std']:.1%}")
         print(f"Error-uncertainty correlation: {uncertainty['error_uncertainty_corr']:.3f}")
 
+    # 5. Generate plots
+    generate_evaluation_plots(
+        predictions=predictions,
+        single_step_metrics=single_step,
+        rollout_metrics=rollout,
+        rollout_errors=rollout_errors,
+        physics_results=physics,
+        uncertainty_metrics=uncertainty,
+        uncertainty_data=uncertainty_data,
+        horizons=horizons,
+        output_dir=eval_output_dir,
+    )
+
     # Save metrics
-    metrics_path = metrics_dir / "val_metrics.json"
+    metrics_path = eval_output_dir / "metrics.json"
     with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2)
 

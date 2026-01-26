@@ -46,7 +46,9 @@ class DynamicThermalModel(ABC):
         self.targets = features["targets"]
 
     @abstractmethod
-    def train(self, df: pd.DataFrame) -> Dict[str, float]:
+    def train(
+        self, df: pd.DataFrame, val_df: Optional[pd.DataFrame] = None
+    ) -> Dict[str, float]:
         """
         Train the model on historical data.
 
@@ -59,6 +61,7 @@ class DynamicThermalModel(ABC):
 
         Args:
             df: Training dataframe with time-series data
+            val_df: Optional validation dataframe for early stopping/model selection
 
         Returns:
             Dict of training metrics (loss, rmse, etc.)

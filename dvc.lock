@@ -5,13 +5,13 @@ stages:
     deps:
     - path: data/raw
       hash: md5
-      md5: 9e94af72f5d834f2e9c4cc2f3b3d4a84.dir
-      size: 3504241
+      md5: 382624fb978884f02639a9bf349389b0.dir
+      size: 18229669
       nfiles: 1
     - path: src/fan_control/pipeline/preprocess.py
       hash: md5
-      md5: 5cde13a6cd4a0c0a7597b5763e3152ac
-      size: 17389
+      md5: f788fbda62214be03bf8113b27442cb2
+      size: 17741
     params:
       params.yaml:
         preprocess:
@@ -25,26 +25,29 @@ stages:
     outs:
     - path: data/processed
       hash: md5
-      md5: 9411696a2d5057bebdfcf7ddc8ea0b2b.dir
-      size: 6134955
+      md5: a6b06759d708156abd203941343be835.dir
+      size: 21593123
       nfiles: 11
   train:
     cmd: python -m fan_control.pipeline.train
     deps:
-    - path: data/processed
+    - path: data/processed/train.csv
       hash: md5
-      md5: 9411696a2d5057bebdfcf7ddc8ea0b2b.dir
-      size: 6134955
-      nfiles: 11
+      md5: 7c2a1408a520510bec359da528862f3f
+      size: 14261323
+    - path: data/processed/val.csv
+      hash: md5
+      md5: 74861f1dc3c653649bb49126987306d2
+      size: 3545623
     - path: src/fan_control/models/
       hash: md5
-      md5: 14e6f90a36051356ce45499270fa9d69.dir
-      size: 130922
+      md5: 06c90d1fc603876016915106694197ac.dir
+      size: 151173
       nfiles: 12
     - path: src/fan_control/pipeline/train.py
       hash: md5
-      md5: 07afc059e2474aca70a4b7235de3aa17
-      size: 1786
+      md5: ea6115b7b019dcad97a02954fdf7b4c1
+      size: 2312
     params:
       params.yaml:
         model.features:
@@ -62,53 +65,68 @@ stages:
           targets:
           - T_cpu
           - T_gpu
-        model.gbr:
-          n_estimators: 200
-          max_depth: 5
-          learning_rate: 0.05
-          l2_regularization: 0.5
-          random_state: 42
-        model.type: gbr
+        model.pinn:
+          hidden_dims:
+          - 64
+          - 32
+          epochs: 25
+          learning_rate: 0.001
+          batch_size: 128
+          physics_weight: 0.5
+          dropout: 0.15
+          dt: 1.0
+          early_stopping_patience: 5
+        model.type: pinn
     outs:
-    - path: out/metrics/train_metrics.json
+    - path: out/train/logs
       hash: md5
-      md5: 565632f81b53f15ba9b73c6a9133ebed
-      size: 256
-    - path: out/models/gbr/
+      md5: 2ec33b50b9c1a363c4ae6b621c0edff5.dir
+      size: 10788
+      nfiles: 2
+    - path: out/train/metrics.json
       hash: md5
-      md5: a91725379096c3ecf3708a963eff2bd3.dir
-      size: 845445
-      nfiles: 3
+      md5: 1bd1f3cd7e492e3bbcb3f071a905697f
+      size: 185
+    - path: out/train/models/pinn/
+      hash: md5
+      md5: 904abcc4ffe68158afc336a9bfe4dc4a.dir
+      size: 20395
+      nfiles: 2
   evaluate:
     cmd: python -m fan_control.pipeline.evaluate
     deps:
     - path: data/processed/val.csv
       hash: md5
-      md5: 1beb5cc4b23dc3a6e50e7ab9f3dd40e0
-      size: 792352
-    - path: out/models/gbr/
+      md5: 74861f1dc3c653649bb49126987306d2
+      size: 3545623
+    - path: out/train/models/pinn/
       hash: md5
-      md5: a91725379096c3ecf3708a963eff2bd3.dir
-      size: 845445
-      nfiles: 3
+      md5: 904abcc4ffe68158afc336a9bfe4dc4a.dir
+      size: 20395
+      nfiles: 2
     - path: src/fan_control/models/
       hash: md5
-      md5: 14e6f90a36051356ce45499270fa9d69.dir
-      size: 130922
+      md5: 06c90d1fc603876016915106694197ac.dir
+      size: 151173
       nfiles: 12
     - path: src/fan_control/pipeline/evaluate.py
       hash: md5
-      md5: bcd048e1759720e1cf54c59bedb36fe5
-      size: 11175
+      md5: 300dd0afdd00c32c0301f90d5f16e53e
+      size: 24368
     params:
       params.yaml:
         evaluate.horizons:
         - 10
         - 20
         - 50
-        model.type: gbr
+        model.type: pinn
     outs:
-    - path: out/metrics/val_metrics.json
+    - path: out/evaluate/metrics.json
       hash: md5
-      md5: e53b85f803880dd010be6a1a8b5ee9c0
-      size: 1830
+      md5: aabebc2a2574c2f7a70d1fce28609883
+      size: 1817
+    - path: out/evaluate/plots
+      hash: md5
+      md5: fed74e9e455d906314f08c30ca894451.dir
+      size: 581337
+      nfiles: 5

@@ -13,7 +13,7 @@ preprocess:
 
 # Model Configuration
 model:
-  type: gbr     # physics | pinn | gbr | gp
+  type: pinn # physics | pinn | gbr | gp
 
   # Feature configuration (shared across models)
   features:
@@ -32,29 +32,31 @@ model:
     - T_cpu
     - T_gpu
   physics:
-    dt: 1.0  # Time step (seconds)
+    dt: 1.0 # Time step (seconds)
     # Initial parameter guesses (will be optimized during training)
-    C_cpu: 100.0      # CPU thermal capacitance (J/°C)
-    C_gpu: 80.0       # GPU thermal capacitance (J/°C)
-    G_cpu_base: 1.0   # CPU base thermal conductance (W/°C)
-    G_gpu_base: 0.8   # GPU base thermal conductance (W/°C)
-    G_cpu_pwm2: 0.05  # CPU cooling from pwm2
-    G_cpu_pwm4: 0.02  # CPU cooling from pwm4
-    G_cpu_pwm5: 0.02  # CPU cooling from pwm5
-    G_gpu_pwm2: 0.01  # GPU cooling from pwm2
-    G_gpu_pwm4: 0.03  # GPU cooling from pwm4
-    G_gpu_pwm5: 0.04  # GPU cooling from pwm5
+    C_cpu: 100.0 # CPU thermal capacitance (J/°C)
+    C_gpu: 80.0 # GPU thermal capacitance (J/°C)
+    G_cpu_base: 1.0 # CPU base thermal conductance (W/°C)
+    G_gpu_base: 0.8 # GPU base thermal conductance (W/°C)
+    G_cpu_pwm2: 0.05 # CPU cooling from pwm2
+    G_cpu_pwm4: 0.02 # CPU cooling from pwm4
+    G_cpu_pwm5: 0.02 # CPU cooling from pwm5
+    G_gpu_pwm2: 0.01 # GPU cooling from pwm2
+    G_gpu_pwm4: 0.03 # GPU cooling from pwm4
+    G_gpu_pwm5: 0.04 # GPU cooling from pwm5
 
   # PINN model parameters (Physics-Informed Neural Network)
   pinn:
     hidden_dims:
     - 64
     - 32
-    epochs: 200
+    epochs: 25
     learning_rate: 0.001
-    batch_size: 64
-    physics_weight: 0.1
+    batch_size: 128
+    physics_weight: 0.5
+    dropout: 0.15
     dt: 1.0
+    early_stopping_patience: 5
 
   # GBR model parameters (Gradient Boosting Regressor)
   gbr:
@@ -68,13 +70,12 @@ model:
   gp:
     training_iter: 200
     learning_rate: 0.05
-    max_train_samples: 3000  # GP is O(n^3), subsample if needed
+    max_train_samples: 3000 # GP is O(n^3), subsample if needed
 
 # Evaluation Configuration
 evaluate:
-  horizons:               # Multi-step rollout horizons to test
-
-# Optimizer Configuration
+  horizons: # Multi-step rollout horizons to test
+    # Optimizer Configuration
   - 10
   - 20
   - 50
