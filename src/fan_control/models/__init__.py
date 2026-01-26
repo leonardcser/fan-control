@@ -19,6 +19,7 @@ Usage:
         ...
 """
 
+import importlib
 from typing import Dict, Type, Any, Optional
 
 from .base import DynamicThermalModel
@@ -39,12 +40,26 @@ def register_model(name: str):
         class GradientBoostingModel(DynamicThermalModel):
             ...
     """
+
     def decorator(cls: Type[DynamicThermalModel]) -> Type[DynamicThermalModel]:
         if name in _MODEL_REGISTRY:
             raise ValueError(f"Model '{name}' is already registered")
         _MODEL_REGISTRY[name] = cls
         return cls
+
     return decorator
+
+
+def _lazy_load_module(model_type: str) -> None:
+    """Lazy load module for the requested model type."""
+    if model_type == "gbr":
+        importlib.import_module(".gbr", package=__package__)
+    elif model_type == "physics":
+        importlib.import_module(".physics", package=__package__)
+    elif model_type == "pinn":
+        importlib.import_module(".pinn", package=__package__)
+    elif model_type == "gp":
+        importlib.import_module(".gp", package=__package__)
 
 
 def get_model(model_type: str, config: Dict[str, Any]) -> DynamicThermalModel:
@@ -61,18 +76,26 @@ def get_model(model_type: str, config: Dict[str, Any]) -> DynamicThermalModel:
     Raises:
         ValueError: If model_type is not registered
     """
+    # Lazy load the specific model module
+    _lazy_load_module(model_type)
+
     if model_type not in _MODEL_REGISTRY:
-        available = ", ".join(sorted(_MODEL_REGISTRY.keys()))
-        raise ValueError(
-            f"Unknown model type '{model_type}'. Available: {available}"
-        )
+        # Fallback to check if it was registered via import side-effects
+        # or if we need to list available models (which might require loading all)
+        _load_all_models()
+        if model_type not in _MODEL_REGISTRY:
+            available = ", ".join(sorted(_MODEL_REGISTRY.keys()))
+            raise ValueError(
+                f"Unknown model type '{model_type}'. Available: {available}"
+            )
 
     model_cls = _MODEL_REGISTRY[model_type]
     return model_cls(config)
 
 
 def list_models() -> list[str]:
-    """Return list of registered model types."""
+    """Return list of registered model types. Triggers loading of all models."""
+    _load_all_models()
     return sorted(_MODEL_REGISTRY.keys())
 
 
@@ -94,22 +117,29 @@ def load_model(
     """
     from pathlib import Path as PathLib
 
+    # Lazy load the specific model module
+    _lazy_load_module(model_type)
+
     if model_type not in _MODEL_REGISTRY:
-        available = ", ".join(sorted(_MODEL_REGISTRY.keys()))
-        raise ValueError(
-            f"Unknown model type '{model_type}'. Available: {available}"
-        )
+        _load_all_models()
+        if model_type not in _MODEL_REGISTRY:
+            available = ", ".join(sorted(_MODEL_REGISTRY.keys()))
+            raise ValueError(
+                f"Unknown model type '{model_type}'. Available: {available}"
+            )
 
     model_cls = _MODEL_REGISTRY[model_type]
     return model_cls.load(PathLib(path), config)
 
 
-# Import model implementations to trigger registration
-# These imports must come after the registry is defined
-from . import gbr  # noqa: E402, F401
-from . import physics  # noqa: E402, F401
-from . import pinn  # noqa: E402, F401
-from . import gp  # noqa: E402, F401
+def _load_all_models():
+    """Load all model modules to populate registry."""
+    for m in ["gbr", "physics", "pinn", "gp"]:
+        try:
+            _lazy_load_module(m)
+        except ImportError:
+            pass  # Ignore import errors for missing dependencies (optional models)
+
 
 # Public API
 __all__ = [
