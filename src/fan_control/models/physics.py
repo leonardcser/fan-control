@@ -64,10 +64,11 @@ class PhysicsModel(DynamicThermalModel):
         self.G_gpu_pwm5 = physics_config["G_gpu_pwm5"]
 
         # Parameter bounds for optimization
+        # Derived from data: G ≈ 1.9 W/°C, C ≈ 60 J/°C
         self.param_bounds = {
-            "C": (10.0, 500.0),
-            "G_base": (0.1, 10.0),
-            "G_fan": (0.001, 0.5),
+            "C": (20.0, 200.0),     # Based on data-implied values
+            "G_base": (1.0, 3.0),   # Narrower range around data-implied 1.9
+            "G_fan": (0.001, 0.05), # Small incremental conductance from fans
         }
 
     def _pack_params(self) -> np.ndarray:

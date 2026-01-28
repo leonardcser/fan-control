@@ -3,6 +3,7 @@ Preprocessing stage for DVC pipeline.
 Loads raw CSVs, filters, normalizes, and splits into train/val sets.
 
 Handles time-series data with episode structure for MPC model training.
+Includes data balancing strategies to address imbalanced datasets.
 """
 
 import pandas as pd
@@ -14,6 +15,165 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 logger = logging.getLogger(__name__)
+
+
+def add_lag_features(df: pd.DataFrame, lags: list[int]) -> pd.DataFrame:
+    """Add lagged temperature features within each episode.
+
+    Args:
+        df: DataFrame with episode_id, T_cpu, T_gpu columns
+        lags: List of lag values (e.g., [1, 2, 5] adds T_cpu_lag1, T_cpu_lag2, etc.)
+
+    Returns:
+        DataFrame with added lag features
+    """
+    if "episode_id" not in df.columns:
+        logger.warning("No episode_id column - cannot add lag features")
+        return df
+
+    df = df.sort_values(["episode_id", "sample_index"]).copy()
+
+    for lag in lags:
+        df[f"T_cpu_lag{lag}"] = df.groupby("episode_id")["T_cpu"].shift(lag)
+        df[f"T_gpu_lag{lag}"] = df.groupby("episode_id")["T_gpu"].shift(lag)
+
+    # Drop rows where lag features are NaN (start of each episode)
+    before = len(df)
+    df = df.dropna(subset=[f"T_cpu_lag{max(lags)}", f"T_gpu_lag{max(lags)}"])
+    logger.info(f"Added lag features (lags={lags}), dropped {before - len(df)} rows with NaN lags")
+
+    return df
+
+
+def downsample_steady_state(
+    df: pd.DataFrame, transient_threshold: float, steady_ratio: float
+) -> pd.DataFrame:
+    """Downsample steady-state data while keeping all transient data.
+
+    Args:
+        df: DataFrame with episode_id, T_cpu columns
+        transient_threshold: |dT/dt| above this is considered transient
+        steady_ratio: Fraction of steady-state samples to keep
+
+    Returns:
+        DataFrame with balanced data
+    """
+    if "episode_id" not in df.columns:
+        logger.warning("No episode_id - using global diff for transient detection")
+        df["dT_cpu"] = df["T_cpu"].diff()
+    else:
+        df = df.sort_values(["episode_id", "sample_index"]).copy()
+        df["dT_cpu"] = df.groupby("episode_id")["T_cpu"].diff()
+
+    # Split into transient and steady-state
+    is_transient = df["dT_cpu"].abs() > transient_threshold
+    transient_df = df[is_transient].copy()
+    steady_df = df[~is_transient].copy()
+
+    logger.info(
+        f"Before downsampling: {len(transient_df)} transient, {len(steady_df)} steady-state"
+    )
+
+    # Randomly sample steady-state data
+    n_keep = int(len(steady_df) * steady_ratio)
+    if n_keep < len(steady_df):
+        steady_df = steady_df.sample(n=n_keep, random_state=42)
+
+    # Combine and drop temp column
+    result = pd.concat([transient_df, steady_df], ignore_index=True)
+    result = result.drop(columns=["dT_cpu"])
+
+    logger.info(
+        f"After downsampling: {len(transient_df)} transient + {len(steady_df)} steady = {len(result)} total"
+    )
+
+    return result
+
+
+def remove_near_duplicates(
+    df: pd.DataFrame, temp_precision: float, pwm_precision: int
+) -> pd.DataFrame:
+    """Remove near-duplicate rows based on rounded values.
+
+    Args:
+        df: DataFrame with T_cpu, T_gpu, pwm columns
+        temp_precision: Round temperature to this precision
+        pwm_precision: Round PWM to this precision
+
+    Returns:
+        DataFrame with duplicates removed
+    """
+    df = df.copy()
+
+    # Create rounded columns for deduplication
+    df["_T_cpu_r"] = (df["T_cpu"] / temp_precision).round() * temp_precision
+    df["_T_gpu_r"] = (df["T_gpu"] / temp_precision).round() * temp_precision
+
+    pwm_cols = [c for c in df.columns if c.startswith("pwm") and not c.startswith("_")]
+    for col in pwm_cols:
+        df[f"_{col}_r"] = (df[col] / pwm_precision).round() * pwm_precision
+
+    # Also round power
+    df["_P_cpu_r"] = df["P_cpu"].round()
+    df["_P_gpu_r"] = df["P_gpu"].round()
+
+    # Dedup key columns
+    dedup_cols = ["_T_cpu_r", "_T_gpu_r", "_P_cpu_r", "_P_gpu_r"] + [
+        f"_{c}_r" for c in pwm_cols
+    ]
+
+    before = len(df)
+    df = df.drop_duplicates(subset=dedup_cols, keep="first")
+
+    # Drop temp columns
+    df = df.drop(columns=[c for c in df.columns if c.startswith("_")])
+
+    logger.info(f"Removed {before - len(df)} near-duplicate rows ({100*(before-len(df))/before:.1f}%)")
+
+    return df
+
+
+def stratified_sample(
+    df: pd.DataFrame,
+    temp_bins: list[float],
+    pwm_bins: list[float],
+    max_per_bin: int,
+) -> pd.DataFrame:
+    """Stratified sampling to balance data across temp/pwm regions.
+
+    Args:
+        df: DataFrame with T_cpu, pwm columns
+        temp_bins: Temperature bin edges
+        pwm_bins: PWM total bin edges
+        max_per_bin: Maximum samples per (temp, pwm) bin
+
+    Returns:
+        Balanced DataFrame
+    """
+    df = df.copy()
+
+    # Calculate PWM total if not present
+    pwm_cols = [c for c in df.columns if c.startswith("pwm")]
+    df["_pwm_total"] = df[pwm_cols].sum(axis=1)
+
+    # Create bins
+    df["_T_bin"] = pd.cut(df["T_cpu"], temp_bins, labels=False)
+    df["_P_bin"] = pd.cut(df["_pwm_total"], pwm_bins, labels=False)
+
+    # Sample up to max_per_bin from each (T_bin, P_bin) combination
+    sampled = []
+    for (t_bin, p_bin), group in df.groupby(["_T_bin", "_P_bin"]):
+        if len(group) > max_per_bin:
+            sampled.append(group.sample(n=max_per_bin, random_state=42))
+        else:
+            sampled.append(group)
+
+    result = pd.concat(sampled, ignore_index=True)
+    result = result.drop(columns=["_pwm_total", "_T_bin", "_P_bin"])
+
+    logger.info(f"Stratified sampling: {len(df)} -> {len(result)} samples")
+
+    return result
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -346,6 +506,38 @@ if __name__ == "__main__":
     min_power_cfg = preprocess_params["min_power"]
     max_temp_cfg = preprocess_params["max_temp"]
     test_size = preprocess_params["test_size"]
+    balance_cfg = preprocess_params.get("balance", {})
+    lag_cfg = preprocess_params.get("lag_features", {})
+    strategy = preprocess_params.get("strategy", "baseline")
+
+    # Configure balancing based on strategy
+    # Strategies: baseline, dedup, transient, stratified, combined
+    logger.info(f"Using preprocessing strategy: {strategy}")
+    if strategy == "baseline":
+        # No balancing - use all data
+        balance_cfg["remove_duplicates"]["enabled"] = False
+        balance_cfg["downsample_steady_state"]["enabled"] = False
+        balance_cfg["stratified_sampling"]["enabled"] = False
+    elif strategy == "dedup":
+        # Only remove near-duplicates
+        balance_cfg["remove_duplicates"]["enabled"] = True
+        balance_cfg["downsample_steady_state"]["enabled"] = False
+        balance_cfg["stratified_sampling"]["enabled"] = False
+    elif strategy == "transient":
+        # Keep more transient data for dynamics modeling
+        balance_cfg["remove_duplicates"]["enabled"] = True
+        balance_cfg["downsample_steady_state"]["enabled"] = True
+        balance_cfg["stratified_sampling"]["enabled"] = False
+    elif strategy == "stratified":
+        # Balance across temperature/PWM bins
+        balance_cfg["remove_duplicates"]["enabled"] = True
+        balance_cfg["downsample_steady_state"]["enabled"] = False
+        balance_cfg["stratified_sampling"]["enabled"] = True
+    elif strategy == "combined":
+        # All strategies combined
+        balance_cfg["remove_duplicates"]["enabled"] = True
+        balance_cfg["downsample_steady_state"]["enabled"] = True
+        balance_cfg["stratified_sampling"]["enabled"] = True
 
     # Load config for ML parameters if needed
     with open("config.yaml") as f:
@@ -396,6 +588,21 @@ if __name__ == "__main__":
             f"(T_cpu >= {max_cpu_temp} or T_gpu >= {max_gpu_temp})"
         )
 
+    # 3b. Filter out low-temperature data where fans have minimal effect
+    min_temp_cfg = preprocess_params.get("min_temp", {})
+    if min_temp_cfg:
+        min_cpu_temp = min_temp_cfg.get("cpu", 0)
+        min_gpu_temp = min_temp_cfg.get("gpu", 0)
+        initial_count = len(df)
+        # Keep data where either CPU or GPU is above min temp (fans can help)
+        df = df[(df["T_cpu"] >= min_cpu_temp) | (df["T_gpu"] >= min_gpu_temp)]
+        filtered_count = initial_count - len(df)
+        if filtered_count > 0:
+            logger.info(
+                f"Filtered {filtered_count} low-temp samples where fans have minimal effect "
+                f"(T_cpu < {min_cpu_temp} and T_gpu < {min_gpu_temp})"
+            )
+
     # 4. Drop rows with missing values in key model input columns
     key_cols = ["T_cpu", "T_gpu", "pwm2", "pwm4", "pwm5", "P_cpu", "P_gpu", "T_amb"]
     before_drop = len(df)
@@ -422,15 +629,52 @@ if __name__ == "__main__":
         df["cpu_total_mhz"] = df[mhz_cols].sum(axis=1)
         logger.info(f"Added cpu_total_mhz feature (sum of {len(mhz_cols)} cores)")
 
-    # 6. Generate EDA plots from filtered data
+    # 6a. Apply data balancing strategies
+    logger.info(f"Before balancing: {len(df)} samples")
+
+    # Remove near-duplicates first (before other strategies)
+    dedup_cfg = balance_cfg.get("remove_duplicates", {})
+    if dedup_cfg.get("enabled", False):
+        df = remove_near_duplicates(
+            df,
+            temp_precision=dedup_cfg.get("temp_precision", 0.5),
+            pwm_precision=dedup_cfg.get("pwm_precision", 5),
+        )
+
+    # Downsample steady-state data
+    steady_cfg = balance_cfg.get("downsample_steady_state", {})
+    if steady_cfg.get("enabled", False):
+        df = downsample_steady_state(
+            df,
+            transient_threshold=steady_cfg.get("transient_threshold", 0.3),
+            steady_ratio=steady_cfg.get("steady_state_ratio", 0.3),
+        )
+
+    # Stratified sampling (usually mutually exclusive with above)
+    strat_cfg = balance_cfg.get("stratified_sampling", {})
+    if strat_cfg.get("enabled", False):
+        df = stratified_sample(
+            df,
+            temp_bins=strat_cfg.get("temp_bins", [0, 60, 70, 80, 85, 90, 95]),
+            pwm_bins=strat_cfg.get("pwm_bins", [0, 100, 200, 300, 500, 800]),
+            max_per_bin=strat_cfg.get("max_samples_per_bin", 500),
+        )
+
+    # Add lag features for dynamics modeling
+    if lag_cfg.get("enabled", False):
+        df = add_lag_features(df, lags=lag_cfg.get("lags", [1, 2, 5]))
+
+    logger.info(f"After balancing: {len(df)} samples")
+
+    # 7. Generate EDA plots from filtered data
     plots_dir = Path("data/processed/plots")
     generate_eda_plots(df.copy(), plots_dir)
 
-    # 6b. Generate time-series specific plots if episode data exists
+    # 7b. Generate time-series specific plots if episode data exists
     if "episode_id" in df.columns:
         generate_timeseries_plots(df.copy(), plots_dir)
 
-    # 7. Split into train/val
+    # 8. Split into train/val
     # For time-series data: split by episode to preserve temporal continuity
     # For equilibrium data: random split
     if "episode_id" in df.columns:
@@ -449,7 +693,7 @@ if __name__ == "__main__":
         from sklearn.model_selection import train_test_split
         train_df, val_df = train_test_split(df, test_size=test_size, random_state=42)
 
-    # 8. Save processed CSVs
+    # 9. Save processed CSVs
     train_path = output_dir / "train.csv"
     val_path = output_dir / "val.csv"
 

@@ -38,12 +38,13 @@ def evaluate_single_step(
         - metrics: RMSE, MAE, R² for CPU and GPU predictions.
         - predictions: actual and predicted values for plotting.
     """
-    # Prepare targets
+    # Prepare targets - shift within episodes to get T_next
     if "T_cpu_next" not in df.columns:
         df = df.copy()
-        df["T_cpu_next"] = df["T_cpu"].shift(-1)
-        df["T_gpu_next"] = df["T_gpu"].shift(-1)
-        df = df.iloc[:-1]
+        df = df.sort_values(["episode_id", "sample_index"])
+        df["T_cpu_next"] = df.groupby("episode_id")["T_cpu"].shift(-1)
+        df["T_gpu_next"] = df.groupby("episode_id")["T_gpu"].shift(-1)
+        df = df.dropna(subset=["T_cpu_next", "T_gpu_next"])
 
     y_cpu_true = df["T_cpu_next"].values
     y_gpu_true = df["T_gpu_next"].values
@@ -241,9 +242,10 @@ def evaluate_uncertainty(
     """
     if "T_cpu_next" not in df.columns:
         df = df.copy()
-        df["T_cpu_next"] = df["T_cpu"].shift(-1)
-        df["T_gpu_next"] = df["T_gpu"].shift(-1)
-        df = df.iloc[:-1]
+        df = df.sort_values(["episode_id", "sample_index"])
+        df["T_cpu_next"] = df.groupby("episode_id")["T_cpu"].shift(-1)
+        df["T_gpu_next"] = df.groupby("episode_id")["T_gpu"].shift(-1)
+        df = df.dropna(subset=["T_cpu_next", "T_gpu_next"])
 
     errors = []
     uncertainties = []
@@ -293,7 +295,7 @@ def evaluate_uncertainty(
 def plot_predicted_vs_actual(
     predictions: Dict[str, np.ndarray],
     metrics: Dict[str, float],
-    output_dir: Path,
+    images_dir: Path,
 ) -> None:
     """Plot predicted vs actual temperature scatter plots."""
     _, axes = plt.subplots(1, 2, figsize=(14, 6))
@@ -333,14 +335,14 @@ def plot_predicted_vs_actual(
         ax.set_aspect("equal", adjustable="box")
 
     plt.tight_layout()
-    plt.savefig(output_dir / "predicted_vs_actual.png", dpi=150)
+    plt.savefig(images_dir / "predicted_vs_actual.png", dpi=150)
     plt.close()
-    logger.info(f"Saved predicted vs actual plot to {output_dir / 'predicted_vs_actual.png'}")
+    logger.info(f"Saved predicted vs actual plot to {images_dir / 'predicted_vs_actual.png'}")
 
 
 def plot_residual_distribution(
     predictions: Dict[str, np.ndarray],
-    output_dir: Path,
+    images_dir: Path,
 ) -> None:
     """Plot residual (error) distributions."""
     _, axes = plt.subplots(1, 2, figsize=(14, 5))
@@ -372,15 +374,15 @@ def plot_residual_distribution(
         ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(output_dir / "residual_distribution.png", dpi=150)
+    plt.savefig(images_dir / "residual_distribution.png", dpi=150)
     plt.close()
-    logger.info(f"Saved residual distribution plot to {output_dir / 'residual_distribution.png'}")
+    logger.info(f"Saved residual distribution plot to {images_dir / 'residual_distribution.png'}")
 
 
 def plot_rollout_error_vs_horizon(
     rollout_metrics: Dict[str, Dict[str, float]],
     horizons: List[int],
-    output_dir: Path,
+    images_dir: Path,
 ) -> None:
     """Plot RMSE vs prediction horizon."""
     _, ax = plt.subplots(figsize=(10, 6))
@@ -413,14 +415,14 @@ def plot_rollout_error_vs_horizon(
     ax.set_xticks(valid_horizons)
 
     plt.tight_layout()
-    plt.savefig(output_dir / "rollout_error_vs_horizon.png", dpi=150)
+    plt.savefig(images_dir / "rollout_error_vs_horizon.png", dpi=150)
     plt.close()
-    logger.info(f"Saved rollout error plot to {output_dir / 'rollout_error_vs_horizon.png'}")
+    logger.info(f"Saved rollout error plot to {images_dir / 'rollout_error_vs_horizon.png'}")
 
 
 def plot_rollout_error_distribution(
     rollout_errors: Dict[int, Dict[str, np.ndarray]],
-    output_dir: Path,
+    images_dir: Path,
 ) -> None:
     """Plot box plots of rollout errors at different horizons."""
     if not rollout_errors:
@@ -450,14 +452,14 @@ def plot_rollout_error_distribution(
         ax.grid(True, alpha=0.3, axis="y")
 
     plt.tight_layout()
-    plt.savefig(output_dir / "rollout_error_distribution.png", dpi=150)
+    plt.savefig(images_dir / "rollout_error_distribution.png", dpi=150)
     plt.close()
-    logger.info(f"Saved rollout error distribution plot to {output_dir / 'rollout_error_distribution.png'}")
+    logger.info(f"Saved rollout error distribution plot to {images_dir / 'rollout_error_distribution.png'}")
 
 
 def plot_physics_monotonicity(
     physics_details: Dict[str, List[float]],
-    output_dir: Path,
+    images_dir: Path,
 ) -> None:
     """Plot physics consistency: temperature vs PWM and power."""
     pwm_levels = [20, 40, 60, 80, 100]
@@ -503,15 +505,15 @@ def plot_physics_monotonicity(
 
     plt.suptitle("Physics Consistency: Monotonicity Checks", fontsize=14, y=1.02)
     plt.tight_layout()
-    plt.savefig(output_dir / "physics_monotonicity.png", dpi=150)
+    plt.savefig(images_dir / "physics_monotonicity.png", dpi=150)
     plt.close()
-    logger.info(f"Saved physics monotonicity plot to {output_dir / 'physics_monotonicity.png'}")
+    logger.info(f"Saved physics monotonicity plot to {images_dir / 'physics_monotonicity.png'}")
 
 
 def plot_uncertainty_calibration(
     uncertainty_data: Dict[str, np.ndarray],
     uncertainty_metrics: Dict[str, float],
-    output_dir: Path,
+    images_dir: Path,
 ) -> None:
     """Plot uncertainty calibration: error vs predicted uncertainty."""
     errors = uncertainty_data["errors"]
@@ -560,9 +562,128 @@ def plot_uncertainty_calibration(
     )
 
     plt.tight_layout()
-    plt.savefig(output_dir / "uncertainty_calibration.png", dpi=150)
+    plt.savefig(images_dir / "uncertainty_calibration.png", dpi=150)
     plt.close()
-    logger.info(f"Saved uncertainty calibration plot to {output_dir / 'uncertainty_calibration.png'}")
+    logger.info(f"Saved uncertainty calibration plot to {images_dir / 'uncertainty_calibration.png'}")
+
+
+def save_dvc_plot_data(
+    predictions: Dict[str, np.ndarray],
+    rollout_metrics: Dict[str, Dict[str, float]],
+    rollout_errors: Dict[int, Dict[str, np.ndarray]],
+    physics_results: Dict[str, Any],
+    uncertainty_data: Optional[Dict[str, np.ndarray]],
+    horizons: List[int],
+    output_dir: Path,
+) -> None:
+    """Save JSON data for DVC plots to enable experiment comparison."""
+    plots_dir = output_dir / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Predicted vs actual (sampled for reasonable file size)
+    n_samples = len(predictions["cpu_true"])
+    sample_indices = np.random.choice(n_samples, size=min(1000, n_samples), replace=False)
+    sample_indices.sort()
+
+    pred_vs_actual_data = []
+    for i in sample_indices:
+        pred_vs_actual_data.append({
+            "cpu_actual": float(predictions["cpu_true"][i]),
+            "cpu_predicted": float(predictions["cpu_pred"][i]),
+            "gpu_actual": float(predictions["gpu_true"][i]),
+            "gpu_predicted": float(predictions["gpu_pred"][i]),
+        })
+
+    with open(plots_dir / "predicted_vs_actual.json", "w") as f:
+        json.dump(pred_vs_actual_data, f, indent=2)
+
+    # 2. Residuals distribution (binned histogram data)
+    for component in ["cpu", "gpu"]:
+        residuals = predictions[f"{component}_pred"] - predictions[f"{component}_true"]
+        hist, bin_edges = np.histogram(residuals, bins=50, density=True)
+        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+        residual_data = [
+            {"error": float(bc), "density": float(h)}
+            for bc, h in zip(bin_centers, hist)
+        ]
+
+        with open(plots_dir / f"residuals_{component}.json", "w") as f:
+            json.dump(residual_data, f, indent=2)
+
+    # 3. Rollout error vs horizon
+    rollout_data = []
+    for h in horizons:
+        key = f"horizon_{h}"
+        if key in rollout_metrics:
+            rollout_data.append({
+                "horizon": h,
+                "cpu_rmse": rollout_metrics[key]["cpu_rmse"],
+                "cpu_mae": rollout_metrics[key]["cpu_mae"],
+                "gpu_rmse": rollout_metrics[key]["gpu_rmse"],
+                "gpu_mae": rollout_metrics[key]["gpu_mae"],
+            })
+
+    with open(plots_dir / "rollout_by_horizon.json", "w") as f:
+        json.dump(rollout_data, f, indent=2)
+
+    # 4. Rollout error distribution per horizon
+    for h, errors in rollout_errors.items():
+        error_data = [
+            {"cpu_error": float(cpu), "gpu_error": float(gpu)}
+            for cpu, gpu in zip(errors["cpu_errors"], errors["gpu_errors"])
+        ]
+        with open(plots_dir / f"rollout_errors_h{h}.json", "w") as f:
+            json.dump(error_data, f, indent=2)
+
+    # 5. Physics monotonicity data
+    pwm_levels = [20, 40, 60, 80, 100]
+    power_levels = [50, 100, 150, 200]
+    details = physics_results["details"]
+
+    physics_pwm_data = [
+        {
+            "pwm": pwm,
+            "cpu_temp": details["cpu_temps_by_pwm"][i],
+            "gpu_temp": details["gpu_temps_by_pwm"][i],
+        }
+        for i, pwm in enumerate(pwm_levels)
+    ]
+
+    with open(plots_dir / "physics_pwm.json", "w") as f:
+        json.dump(physics_pwm_data, f, indent=2)
+
+    physics_power_data = [
+        {
+            "power": power,
+            "cpu_temp": details["cpu_temps_by_power"][i],
+            "gpu_temp": details["gpu_temps_by_power"][i],
+        }
+        for i, power in enumerate(power_levels)
+    ]
+
+    with open(plots_dir / "physics_power.json", "w") as f:
+        json.dump(physics_power_data, f, indent=2)
+
+    # 6. Uncertainty calibration (if available)
+    if uncertainty_data is not None:
+        # Sample for reasonable file size
+        n = len(uncertainty_data["errors"])
+        sample_idx = np.random.choice(n, size=min(1000, n), replace=False)
+        sample_idx.sort()
+
+        uncertainty_plot_data = [
+            {
+                "error": float(uncertainty_data["errors"][i]),
+                "uncertainty": float(uncertainty_data["uncertainties"][i]),
+            }
+            for i in sample_idx
+        ]
+
+        with open(plots_dir / "uncertainty.json", "w") as f:
+            json.dump(uncertainty_plot_data, f, indent=2)
+
+    logger.info(f"Saved DVC plot data to {plots_dir}")
 
 
 def generate_evaluation_plots(
@@ -579,29 +700,42 @@ def generate_evaluation_plots(
     """Generate all evaluation plots."""
     plots_dir = output_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
+    images_dir = plots_dir / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("Generating evaluation plots...")
 
+    # Save JSON data for DVC plots
+    save_dvc_plot_data(
+        predictions=predictions,
+        rollout_metrics=rollout_metrics,
+        rollout_errors=rollout_errors,
+        physics_results=physics_results,
+        uncertainty_data=uncertainty_data,
+        horizons=horizons,
+        output_dir=output_dir,
+    )
+
     # 1. Predicted vs actual
-    plot_predicted_vs_actual(predictions, single_step_metrics, plots_dir)
+    plot_predicted_vs_actual(predictions, single_step_metrics, images_dir)
 
     # 2. Residual distribution
-    plot_residual_distribution(predictions, plots_dir)
+    plot_residual_distribution(predictions, images_dir)
 
     # 3. Rollout error vs horizon
-    plot_rollout_error_vs_horizon(rollout_metrics, horizons, plots_dir)
+    plot_rollout_error_vs_horizon(rollout_metrics, horizons, images_dir)
 
     # 4. Rollout error distribution (box plots)
-    plot_rollout_error_distribution(rollout_errors, plots_dir)
+    plot_rollout_error_distribution(rollout_errors, images_dir)
 
     # 5. Physics monotonicity
-    plot_physics_monotonicity(physics_results["details"], plots_dir)
+    plot_physics_monotonicity(physics_results["details"], images_dir)
 
     # 6. Uncertainty calibration (if available)
     if uncertainty_data is not None:
-        plot_uncertainty_calibration(uncertainty_data, uncertainty_metrics, plots_dir)
+        plot_uncertainty_calibration(uncertainty_data, uncertainty_metrics, images_dir)
 
-    logger.info(f"All evaluation plots saved to {plots_dir}")
+    logger.info(f"All evaluation plots saved to {images_dir}")
 
 
 if __name__ == "__main__":

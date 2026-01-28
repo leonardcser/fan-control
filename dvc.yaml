@@ -7,8 +7,7 @@ stages:
     params:
       - preprocess
     outs:
-      - data/processed:
-          cache: false
+      - data/processed
 
   train:
     cmd: python -m fan_control.pipeline.train
@@ -38,6 +37,31 @@ stages:
       - model.type
       - evaluate.horizons
     outs:
-      - out/evaluate/plots
+      - out/evaluate/plots/images
     metrics:
       - out/evaluate/metrics.json
+    plots:
+      - out/evaluate/plots/predicted_vs_actual.json:
+          x: cpu_actual
+          y: cpu_predicted
+          title: "CPU: Predicted vs Actual"
+      - out/evaluate/plots/residuals_cpu.json:
+          x: error
+          y: density
+          title: "CPU Residual Distribution"
+      - out/evaluate/plots/residuals_gpu.json:
+          x: error
+          y: density
+          title: "GPU Residual Distribution"
+      - out/evaluate/plots/rollout_by_horizon.json:
+          x: horizon
+          y: cpu_rmse
+          title: "Rollout RMSE vs Horizon"
+      - out/evaluate/plots/physics_pwm.json:
+          x: pwm
+          y: cpu_temp
+          title: "Temperature vs PWM"
+      - out/evaluate/plots/physics_power.json:
+          x: power
+          y: cpu_temp
+          title: "Temperature vs Power"

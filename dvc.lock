@@ -5,13 +5,13 @@ stages:
     deps:
     - path: data/raw
       hash: md5
-      md5: 382624fb978884f02639a9bf349389b0.dir
-      size: 18229669
-      nfiles: 1
+      md5: fc69ef405e23b9fbf8acd4bbc65e97ec.dir
+      size: 20958241
+      nfiles: 2
     - path: src/fan_control/pipeline/preprocess.py
       hash: md5
-      md5: 283e27239f49fe3e17ec7213465073c3
-      size: 18380
+      md5: 6eeceff63eb5053a5a5ea5fc5aad37ce
+      size: 27501
     params:
       params.yaml:
         preprocess:
@@ -22,27 +22,66 @@ stages:
             cpu: 95.0
             gpu: 85.0
           test_size: 0.2
+          strategy: dedup
+          min_temp:
+            cpu: 50.0
+            gpu: 35.0
+          balance:
+            downsample_steady_state:
+              enabled: false
+              transient_threshold: 0.5
+              steady_state_ratio: 0.3
+            remove_duplicates:
+              enabled: true
+              temp_precision: 0.5
+              pwm_precision: 5
+            stratified_sampling:
+              enabled: false
+              max_samples_per_bin: 800
+              temp_bins:
+              - 0
+              - 45
+              - 55
+              - 65
+              - 75
+              - 82
+              - 88
+              - 95
+              pwm_bins:
+              - 0
+              - 80
+              - 160
+              - 240
+              - 400
+              - 600
+              - 800
+          lag_features:
+            enabled: false
+            lags:
+            - 1
+            - 2
+            - 5
     outs:
     - path: data/processed
       hash: md5
-      md5: 816efdacd21a3a60ac13077a84aed310.dir
-      size: 22580324
+      md5: 8d55f686eca512cb0edd55445330de44.dir
+      size: 13186212
       nfiles: 11
   train:
     cmd: python -m fan_control.pipeline.train
     deps:
     - path: data/processed/train.csv
       hash: md5
-      md5: 1f37f3851073a87acfbf7f11add916a4
-      size: 15048215
+      md5: 21f412a94d5eb838f9a2d9805e18fbac
+      size: 7121546
     - path: data/processed/val.csv
       hash: md5
-      md5: 15921402bff05b4ec353b31adff829bd
-      size: 3745932
+      md5: 17c3a547ca3630ddb2e5629fc51d62d7
+      size: 1944360
     - path: src/fan_control/models/
       hash: md5
-      md5: 2f18f35fe99b882775d300cc33292912.dir
-      size: 153082
+      md5: 6301f16dcde6a64ee3178816a97365d9.dir
+      size: 153703
       nfiles: 12
     - path: src/fan_control/pipeline/train.py
       hash: md5
@@ -66,13 +105,19 @@ stages:
           targets:
           - T_cpu
           - T_gpu
-        model.gbr:
-          n_estimators: 100
-          max_depth: 4
-          learning_rate: 0.1
-          l2_regularization: 1.0
-          random_state: 42
-        model.type: gbr
+        model.physics:
+          dt: 1.0
+          C_cpu: 60.0
+          C_gpu: 80.0
+          G_cpu_base: 1.8
+          G_gpu_base: 1.5
+          G_cpu_pwm2: 0.02
+          G_cpu_pwm4: 0.005
+          G_cpu_pwm5: 0.005
+          G_gpu_pwm2: 0.005
+          G_gpu_pwm4: 0.015
+          G_gpu_pwm5: 0.01
+        model.type: physics
     outs:
     - path: out/train/logs
       hash: md5
@@ -81,48 +126,72 @@ stages:
       nfiles: 0
     - path: out/train/metrics.json
       hash: md5
-      md5: e08bf3eb206066e373aca9b22a235fb2
-      size: 253
-    - path: out/train/models/gbr/
+      md5: aa34a6cfc92bed7d6faa0f9a39979e23
+      size: 227
+    - path: out/train/models/physics/
       hash: md5
-      md5: e913e7fcff001f8fa9fed4248e5ed245.dir
-      size: 365692
-      nfiles: 3
+      md5: c46576fa230592ad319bb21293ef4046.dir
+      size: 1496
+      nfiles: 1
   evaluate:
     cmd: python -m fan_control.pipeline.evaluate
     deps:
     - path: data/processed/val.csv
       hash: md5
-      md5: 15921402bff05b4ec353b31adff829bd
-      size: 3745932
-    - path: out/train/models/gbr/
+      md5: 17c3a547ca3630ddb2e5629fc51d62d7
+      size: 1944360
+    - path: out/train/models/physics/
       hash: md5
-      md5: e913e7fcff001f8fa9fed4248e5ed245.dir
-      size: 365692
-      nfiles: 3
+      md5: c46576fa230592ad319bb21293ef4046.dir
+      size: 1496
+      nfiles: 1
     - path: src/fan_control/models/
       hash: md5
-      md5: 2f18f35fe99b882775d300cc33292912.dir
-      size: 153082
+      md5: 6301f16dcde6a64ee3178816a97365d9.dir
+      size: 153703
       nfiles: 12
     - path: src/fan_control/pipeline/evaluate.py
       hash: md5
-      md5: 300dd0afdd00c32c0301f90d5f16e53e
-      size: 24368
+      md5: 610cea3a508b412ef109a86835616d43
+      size: 29358
     params:
       params.yaml:
         evaluate.horizons:
         - 10
         - 20
         - 50
-        model.type: gbr
+        model.type: physics
     outs:
     - path: out/evaluate/metrics.json
       hash: md5
-      md5: 0ae51ccad74da895e9d0f14cbbf14674
-      size: 1826
-    - path: out/evaluate/plots
+      md5: 14f34050ce9195101ed7d714f4fb1e51
+      size: 1738
+    - path: out/evaluate/plots/images
       hash: md5
-      md5: 0f30c32ddb2069cbe43129aec6b2001e.dir
-      size: 520563
+      md5: cfcf5946ecc59383a07777891487710a.dir
+      size: 545463
       nfiles: 5
+    - path: out/evaluate/plots/physics_power.json
+      hash: md5
+      md5: 238a8fa08ae1919c9a5b37a515db954a
+      size: 353
+    - path: out/evaluate/plots/physics_pwm.json
+      hash: md5
+      md5: 9f0ee16725dd90a900d8ff579e852531
+      size: 420
+    - path: out/evaluate/plots/predicted_vs_actual.json
+      hash: md5
+      md5: 26814c16399be7eb57c8c27e1a24d3b1
+      size: 133127
+    - path: out/evaluate/plots/residuals_cpu.json
+      hash: md5
+      md5: 7f73e2aa3159d55c0857ee251c619e9b
+      size: 3575
+    - path: out/evaluate/plots/residuals_gpu.json
+      hash: md5
+      md5: 04a078c2cae15f7129bb1d7664f0bc05
+      size: 3565
+    - path: out/evaluate/plots/rollout_by_horizon.json
+      hash: md5
+      md5: d57465f295723abed1fb466b75dcf70d
+      size: 500

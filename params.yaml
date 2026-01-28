@@ -11,46 +11,105 @@ preprocess:
     gpu: 85.0
   test_size: 0.2
 
+  # Data balancing strategies
+  # Strategy options: baseline, dedup, transient, stratified, combined
+  strategy: dedup # Dedup removes redundancy without transient bias
+
+  # Minimum temperature filter - exclude data where fans have minimal effect
+  min_temp:
+    cpu: 50.0 # Below this, CPU is already cool - fans don't matter
+    gpu: 35.0 # Below this, GPU is already cool - fans don't matter
+
+  balance:
+    # Downsample steady-state data (keeps transient data intact)
+    # Good for dynamics modeling - preserves temperature change events
+    downsample_steady_state:
+      enabled: false
+      transient_threshold: 0.5 # |dT/dt| above this is "transient" (raised from 0.3)
+      steady_state_ratio: 0.3 # Keep 30% of steady-state samples
+
+    # Remove near-duplicate rows
+    # Reduces redundancy without losing coverage
+    remove_duplicates:
+      enabled: true # Enable by default for dedup strategy
+      temp_precision: 0.5 # Round temp to 0.5°C precision
+      pwm_precision: 5 # Round PWM to 5% precision (after normalization)
+
+    # Stratified sampling across temp/pwm bins
+    # Ensures balanced coverage across operating regions
+    stratified_sampling:
+      enabled: false
+      max_samples_per_bin: 800 # Increased for better coverage
+      temp_bins:                                 # Adjusted for data distribution
+      - 0
+      - 45
+      - 55
+      - 65
+      - 75
+      - 82
+      - 88
+      - 95
+      pwm_bins:                                  # Adjusted bins
+
+  # Lag features for dynamics modeling
+  # NOTE: Disabled - requires model changes to maintain history during rollouts
+      - 0
+      - 80
+      - 160
+      - 240
+      - 400
+      - 600
+      - 800
+  lag_features:
+    enabled: false
+    lags:           # Add T(t-1), T(t-2), T(t-5) features
+
 # Model Configuration
+    - 1
+    - 2
+    - 5
 model:
-  type: gbr # physics | pinn | gbr | gp
+  type: physics # physics | pinn | gbr | gp
 
   # Feature configuration (shared across models)
   features:
     state:
-      - T_cpu
-      - T_gpu
+    - T_cpu
+    - T_gpu
     control:
-      - pwm2
-      - pwm4
-      - pwm5
+    - pwm2
+    - pwm4
+    - pwm5
     disturbance:
-      - P_cpu
-      - P_gpu
-      - T_amb
-      - cpu_busy_pct  # Throttling indicator: low % at high temp = throttled
+    - P_cpu
+    - P_gpu
+    - T_amb
+    - cpu_busy_pct
     targets:
-      - T_cpu
-      - T_gpu
+    - T_cpu
+    - T_gpu
   physics:
     dt: 1.0 # Time step (seconds)
-    # Initial parameter guesses (will be optimized during training)
-    C_cpu: 100.0 # CPU thermal capacitance (J/°C)
+    # Initial parameter guesses - derived from data analysis:
+    # G ≈ P / (T - T_amb) ≈ 100W / 60°C ≈ 1.7-2.0 W/°C
+    # C ≈ (P - G*ΔT) / dT ≈ 60-80 J/°C
+    C_cpu: 60.0 # CPU thermal capacitance (J/°C)
     C_gpu: 80.0 # GPU thermal capacitance (J/°C)
-    G_cpu_base: 1.0 # CPU base thermal conductance (W/°C)
-    G_gpu_base: 0.8 # GPU base thermal conductance (W/°C)
-    G_cpu_pwm2: 0.05 # CPU cooling from pwm2
-    G_cpu_pwm4: 0.02 # CPU cooling from pwm4
-    G_cpu_pwm5: 0.02 # CPU cooling from pwm5
-    G_gpu_pwm2: 0.01 # GPU cooling from pwm2
-    G_gpu_pwm4: 0.03 # GPU cooling from pwm4
-    G_gpu_pwm5: 0.04 # GPU cooling from pwm5
+    G_cpu_base: 1.8 # CPU base thermal conductance (W/°C)
+    G_gpu_base: 1.5 # GPU base thermal conductance (W/°C)
+    # Fan conductance contributions (small increments ~1-2% of base)
+    G_cpu_pwm2: 0.02 # CPU cooling from pwm2 (main CPU fan)
+    G_cpu_pwm4: 0.005 # CPU cooling from pwm4 (minor)
+    G_cpu_pwm5: 0.005 # CPU cooling from pwm5 (minor)
+    G_gpu_pwm2: 0.005 # GPU cooling from pwm2 (minor)
+    G_gpu_pwm4: 0.015 # GPU cooling from pwm4 (main GPU fan)
+    G_gpu_pwm5: 0.01 # GPU cooling from pwm5
 
   # PINN model parameters (Physics-Informed Neural Network)
   pinn:
     hidden_dims:
-      - 64
-      - 32
+    - 64
+    - 32
     epochs: 25
     learning_rate: 0.001
     batch_size: 128
@@ -77,9 +136,9 @@ model:
 evaluate:
   horizons: # Multi-step rollout horizons to test
     # Optimizer Configuration
-    - 10
-    - 20
-    - 50
+  - 10
+  - 20
+  - 50
 optimizer:
   method: COBYLA
   options:
@@ -101,4 +160,4 @@ mpc:
   weights:
     effort: 1.0
     smoothness: 3.0 # Reduced - allow faster response
-    temperature: 8.0 # Increased - prioritize temp control
+    temperature: 8.0 # Prioritize temp control
